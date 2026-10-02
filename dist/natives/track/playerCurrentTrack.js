@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const forgescript_1 = require("@tryforge/forgescript");
 const index_js_1 = require("../../index.js");
+const trackPlaylist_js_1 = require("../../managers/trackPlaylist.js");
 exports.default = new forgescript_1.NativeFunction({
     name: '$playerCurrentTrack',
     description: 'Get the current track of a player',
@@ -29,9 +30,13 @@ exports.default = new forgescript_1.NativeFunction({
         const player = linked.getPlayer(guildId.id);
         if (!player)
             return this.customError('Player not found');
+        const current = player.queue.current;
+        if (!current)
+            return this.successJSON(null);
         return this.successJSON({
-            ...player.queue.current?.info,
-            ...player.queue.current?.pluginInfo,
+            ...current.info,
+            ...current.pluginInfo,
+            ...(0, trackPlaylist_js_1.getPlaylistInfo)(current),
         });
     },
 });

@@ -2,6 +2,7 @@ import { Logger } from '@tryforge/forgescript'
 import { Player, SearchPlatform, Track } from 'lavalink-client'
 
 import { LocalSearchAuthManager, localSearchHeaders } from './auth.js'
+import { markNonPlaylistTracks } from './trackPlaylist.js'
 
 export interface PlayerRelatingAutoplayOptions {
   maxFetchTracks: number
@@ -160,6 +161,7 @@ export class PlayerRelatingManager {
       const pick = this.pickTrack(player, baseTrack, result.tracks as Track[])
       if (!pick) continue
 
+      markNonPlaylistTracks([pick])
       player.queue.add(pick)
       return true
     }
@@ -185,6 +187,7 @@ export class PlayerRelatingManager {
       const pick = this.pickTrack(player, baseTrack, result.tracks as Track[])
       if (!pick) continue
 
+      markNonPlaylistTracks([pick])
       player.queue.add(pick)
       return true
     }

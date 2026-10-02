@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const forgescript_1 = require("@tryforge/forgescript");
 const index_js_1 = require("../../index.js");
+const trackPlaylist_js_1 = require("../../managers/trackPlaylist.js");
 exports.default = new forgescript_1.NativeFunction({
     name: '$playerQueue',
     description: 'Get the queue of a player',
@@ -29,7 +30,13 @@ exports.default = new forgescript_1.NativeFunction({
         const player = linked.getPlayer(guildId.id);
         if (!player)
             return this.customError('Player not found');
-        return this.successJSON(player.queue.utils.toJSON());
+        const queue = player.queue.utils.toJSON();
+        const withPlaylist = (track) => track ? { ...track, ...(0, trackPlaylist_js_1.getPlaylistInfo)(track) } : null;
+        return this.successJSON({
+            current: withPlaylist(queue.current),
+            previous: (queue.previous ?? []).map((track) => withPlaylist(track)),
+            tracks: (queue.tracks ?? []).map((track) => withPlaylist(track)),
+        });
     },
 });
 //# sourceMappingURL=playerQueue.js.map

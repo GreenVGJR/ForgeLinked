@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const forgescript_1 = require("@tryforge/forgescript");
 const index_js_1 = require("../../index.js");
+const trackPlaylist_js_1 = require("../../managers/trackPlaylist.js");
 exports.default = new forgescript_1.NativeFunction({
     name: '$playerQueueHistory',
     description: 'Get the queue history of a player',
@@ -40,6 +41,7 @@ exports.default = new forgescript_1.NativeFunction({
             trackUri: t.info.uri,
             length: t.info.duration,
             requester: t.requester,
+            ...(0, trackPlaylist_js_1.getPlaylistInfo)(t),
         }));
         return this.successJSON({ guildId: guildId.id, history });
     },

@@ -3,6 +3,7 @@ import { User } from 'discord.js'
 import { SearchPlatform } from 'lavalink-client'
 
 import { ForgeLinked } from '../../index.js'
+import { stampPlaylistTracks } from '../../managers/trackPlaylist.js'
 
 export default new NativeFunction({
   name: '$playerAddTrack',
@@ -67,8 +68,10 @@ export default new NativeFunction({
       }
 
       if (result.loadType === 'playlist') {
+        stampPlaylistTracks(result.tracks, result.playlist)
         player.queue.add(result.tracks)
       } else {
+        stampPlaylistTracks(result.tracks.slice(0, 1), null)
         player.queue.add(result.tracks[0])
       }
 
@@ -102,6 +105,7 @@ export default new NativeFunction({
           result.loadType === 'playlist'
             ? `Queued ${result.tracks.length} tracks from ${result.playlist?.title}`
             : `Queued ${firstTrack.info.title}`,
+        isPlaylist: result.loadType === 'playlist',
         playlistName: result.loadType === 'playlist' ? result.playlist?.title : null,
         playlistUri: result.loadType === 'playlist' ? result.playlist?.uri : null,
         trackCount: result.loadType === 'playlist' ? result.tracks.length : 1,

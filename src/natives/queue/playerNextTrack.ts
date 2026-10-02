@@ -1,6 +1,7 @@
 import { ArgType, NativeFunction } from '@tryforge/forgescript'
 
 import { ForgeLinked } from '../../index.js'
+import { getPlaylistInfo } from '../../managers/trackPlaylist.js'
 
 export default new NativeFunction({
   name: '$playerNextTrack',
@@ -29,6 +30,7 @@ export default new NativeFunction({
     const player = linked.getPlayer(guildId.id)
     if (!player) return this.customError('Player not found')
     const next = player.queue.tracks[0]
-    return this.successJSON(next ? next.info : null)
+    if (!next) return this.successJSON(null)
+    return this.successJSON({ ...next.info, ...getPlaylistInfo(next) })
   },
 })

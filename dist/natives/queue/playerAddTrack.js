@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const forgescript_1 = require("@tryforge/forgescript");
 const index_js_1 = require("../../index.js");
+const trackPlaylist_js_1 = require("../../managers/trackPlaylist.js");
 exports.default = new forgescript_1.NativeFunction({
     name: '$playerAddTrack',
     description: 'Add a track to a player',
@@ -59,9 +60,11 @@ exports.default = new forgescript_1.NativeFunction({
                 return this.customError('An error occurred while fetching the track.');
             }
             if (result.loadType === 'playlist') {
+                (0, trackPlaylist_js_1.stampPlaylistTracks)(result.tracks, result.playlist);
                 player.queue.add(result.tracks);
             }
             else {
+                (0, trackPlaylist_js_1.stampPlaylistTracks)(result.tracks.slice(0, 1), null);
                 player.queue.add(result.tracks[0]);
             }
             if (!player.playing && !player.paused) {
@@ -87,6 +90,7 @@ exports.default = new forgescript_1.NativeFunction({
                 message: result.loadType === 'playlist'
                     ? `Queued ${result.tracks.length} tracks from ${result.playlist?.title}`
                     : `Queued ${firstTrack.info.title}`,
+                isPlaylist: result.loadType === 'playlist',
                 playlistName: result.loadType === 'playlist' ? result.playlist?.title : null,
                 playlistUri: result.loadType === 'playlist' ? result.playlist?.uri : null,
                 trackCount: result.loadType === 'playlist' ? result.tracks.length : 1,

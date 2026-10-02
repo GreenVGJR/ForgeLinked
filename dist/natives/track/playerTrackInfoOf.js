@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const forgescript_1 = require("@tryforge/forgescript");
 const index_js_1 = require("../../index.js");
+const trackPlaylist_js_1 = require("../../managers/trackPlaylist.js");
 exports.default = new forgescript_1.NativeFunction({
     name: '$playerTrackInfoOf',
     description: 'Get the info of a track',
@@ -34,7 +35,8 @@ exports.default = new forgescript_1.NativeFunction({
             return this.customError('Player not found');
         if (index < 0 || index >= player.queue.tracks.length)
             return this.customError(`Index out of bounds — queue has ${player.queue.tracks.length} track(s)`);
-        return this.successJSON(player.queue.tracks[index]);
+        const track = player.queue.tracks[index];
+        return this.successJSON({ ...track, ...(0, trackPlaylist_js_1.getPlaylistInfo)(track) });
     },
 });
 //# sourceMappingURL=playerTrackInfoOf.js.map

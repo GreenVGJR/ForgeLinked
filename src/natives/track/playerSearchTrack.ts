@@ -1,6 +1,7 @@
 import { ArgType, NativeFunction } from '@tryforge/forgescript'
 
 import { ForgeLinked } from '../../index.js'
+import { getPlaylistInfo, stampPlaylistTracks } from '../../managers/trackPlaylist.js'
 
 export default new NativeFunction({
   name: '$playerSearchTrack',
@@ -89,6 +90,11 @@ export default new NativeFunction({
       let tracks = result.tracks
       if (limit) tracks = tracks.slice(0, limit)
 
+      const isPlaylist = result.loadType === 'playlist'
+      const playlistName = isPlaylist ? (result.playlist?.name ?? null) : null
+      const playlistUri = isPlaylist ? (result.playlist?.uri ?? null) : null
+      stampPlaylistTracks(tracks, isPlaylist ? result.playlist : null)
+
       return this.successJSON({
         status: 'success',
         source,
@@ -97,8 +103,9 @@ export default new NativeFunction({
           result.loadType === 'playlist'
             ? `Found ${tracks.length} tracks from ${result.playlist?.name}`
             : `Found ${tracks.length} tracks matching the query.`,
-        playlistName: result.loadType === 'playlist' ? result.playlist?.name : null,
-        playlistUri: result.loadType === 'playlist' ? result.playlist?.uri : null,
+        isPlaylist,
+        playlistName,
+        playlistUri: playlistUri,
         playlistDuration: result.loadType === 'playlist' ? result.playlist?.duration : null,
         requester: result.tracks[0]?.requester ?? null,
         trackCount: tracks.length,
@@ -109,6 +116,7 @@ export default new NativeFunction({
           url: track.info.uri,
           thumbnail: track.info.artworkUrl,
           source,
+          ...getPlaylistInfo(track),
         })),
       })
     } catch (err) {

@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const forgescript_1 = require("@tryforge/forgescript");
 const index_js_1 = require("../../index.js");
+const trackPlaylist_js_1 = require("../../managers/trackPlaylist.js");
 exports.default = new forgescript_1.NativeFunction({
     name: '$playerSearchTrack',
     description: 'Search for a track',
@@ -83,6 +84,10 @@ exports.default = new forgescript_1.NativeFunction({
             let tracks = result.tracks;
             if (limit)
                 tracks = tracks.slice(0, limit);
+            const isPlaylist = result.loadType === 'playlist';
+            const playlistName = isPlaylist ? (result.playlist?.name ?? null) : null;
+            const playlistUri = isPlaylist ? (result.playlist?.uri ?? null) : null;
+            (0, trackPlaylist_js_1.stampPlaylistTracks)(tracks, isPlaylist ? result.playlist : null);
             return this.successJSON({
                 status: 'success',
                 source,
@@ -90,8 +95,9 @@ exports.default = new forgescript_1.NativeFunction({
                 message: result.loadType === 'playlist'
                     ? `Found ${tracks.length} tracks from ${result.playlist?.name}`
                     : `Found ${tracks.length} tracks matching the query.`,
-                playlistName: result.loadType === 'playlist' ? result.playlist?.name : null,
-                playlistUri: result.loadType === 'playlist' ? result.playlist?.uri : null,
+                isPlaylist,
+                playlistName,
+                playlistUri: playlistUri,
                 playlistDuration: result.loadType === 'playlist' ? result.playlist?.duration : null,
                 requester: result.tracks[0]?.requester ?? null,
                 trackCount: tracks.length,
@@ -102,6 +108,7 @@ exports.default = new forgescript_1.NativeFunction({
                     url: track.info.uri,
                     thumbnail: track.info.artworkUrl,
                     source,
+                    ...(0, trackPlaylist_js_1.getPlaylistInfo)(track),
                 })),
             });
         }

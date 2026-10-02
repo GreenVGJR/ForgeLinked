@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const forgescript_1 = require("@tryforge/forgescript");
 const index_js_1 = require("../../index.js");
+const trackPlaylist_js_1 = require("../../managers/trackPlaylist.js");
 exports.default = new forgescript_1.NativeFunction({
     name: '$playerNextTrack',
     description: 'Get the next upcoming track in the queue',
@@ -30,7 +31,9 @@ exports.default = new forgescript_1.NativeFunction({
         if (!player)
             return this.customError('Player not found');
         const next = player.queue.tracks[0];
-        return this.successJSON(next ? next.info : null);
+        if (!next)
+            return this.successJSON(null);
+        return this.successJSON({ ...next.info, ...(0, trackPlaylist_js_1.getPlaylistInfo)(next) });
     },
 });
 //# sourceMappingURL=playerNextTrack.js.map

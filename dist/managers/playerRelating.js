@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PlayerRelatingManager = void 0;
 const forgescript_1 = require("@tryforge/forgescript");
 const auth_js_1 = require("./auth.js");
+const trackPlaylist_js_1 = require("./trackPlaylist.js");
 class PlayerRelatingManager {
     options;
     auth;
@@ -92,6 +93,7 @@ class PlayerRelatingManager {
             const pick = this.pickTrack(player, baseTrack, result.tracks);
             if (!pick)
                 continue;
+            (0, trackPlaylist_js_1.markNonPlaylistTracks)([pick]);
             player.queue.add(pick);
             return true;
         }
@@ -111,6 +113,7 @@ class PlayerRelatingManager {
             const pick = this.pickTrack(player, baseTrack, result.tracks);
             if (!pick)
                 continue;
+            (0, trackPlaylist_js_1.markNonPlaylistTracks)([pick]);
             player.queue.add(pick);
             return true;
         }

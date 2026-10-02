@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const forgescript_1 = require("@tryforge/forgescript");
 const index_js_1 = require("../../index.js");
+const trackPlaylist_js_1 = require("../../managers/trackPlaylist.js");
 exports.default = new forgescript_1.NativeFunction({
     name: '$playerPreviousTrack',
     description: 'Get the last played track from the queue history',
@@ -30,7 +31,9 @@ exports.default = new forgescript_1.NativeFunction({
         if (!player)
             return this.customError('Player not found');
         const prev = player.queue.previous[0];
-        return this.successJSON(prev ? prev.info : null);
+        if (!prev)
+            return this.successJSON(null);
+        return this.successJSON({ ...prev.info, ...(0, trackPlaylist_js_1.getPlaylistInfo)(prev) });
     },
 });
 //# sourceMappingURL=playerPreviousTrack.js.map

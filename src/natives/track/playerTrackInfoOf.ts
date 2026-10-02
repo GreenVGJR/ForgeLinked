@@ -1,6 +1,7 @@
 import { ArgType, NativeFunction } from '@tryforge/forgescript'
 
 import { ForgeLinked } from '../../index.js'
+import { getPlaylistInfo } from '../../managers/trackPlaylist.js'
 
 export default new NativeFunction({
   name: '$playerTrackInfoOf',
@@ -34,6 +35,7 @@ export default new NativeFunction({
       return this.customError(
         `Index out of bounds — queue has ${player.queue.tracks.length} track(s)`,
       )
-    return this.successJSON(player.queue.tracks[index])
+    const track = player.queue.tracks[index]
+    return this.successJSON({ ...track, ...getPlaylistInfo(track) })
   },
 })

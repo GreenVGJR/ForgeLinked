@@ -1,6 +1,7 @@
 import { ArgType, NativeFunction } from '@tryforge/forgescript'
 
 import { ForgeLinked } from '../../index.js'
+import { getPlaylistInfo } from '../../managers/trackPlaylist.js'
 
 export default new NativeFunction({
   name: '$playerQueueHistory',
@@ -40,6 +41,7 @@ export default new NativeFunction({
         trackUri: t.info.uri,
         length: t.info.duration,
         requester: t.requester,
+        ...getPlaylistInfo(t),
       }))
 
     return this.successJSON({ guildId: guildId.id, history })
