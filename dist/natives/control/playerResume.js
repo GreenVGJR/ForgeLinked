@@ -32,7 +32,16 @@ exports.default = new forgescript_1.NativeFunction({
                 return this.customError('Player not found');
             if (!player.node?.connected)
                 return this.customError('Lavalink node is not connected. Please wait for the node to reconnect.');
-            await player.resume();
+            if (!player.paused)
+                return this.success(true);
+            const wasPaused = player.paused;
+            try {
+                await player.resume();
+            }
+            catch (err) {
+                player.paused = wasPaused;
+                throw err;
+            }
             return this.success(true);
         }
         catch (err) {

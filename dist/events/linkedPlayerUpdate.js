@@ -7,7 +7,7 @@ exports.default = new ForgeLinkedEventManager_1.ForgeLinkedEventHandler({
     name: 'linkedPlayerUpdate',
     version: '2.0.0',
     description: 'This event is called when a player is updated',
-    listener(player) {
+    listener(oldPlayer, player) {
         const commands = this.getExtension(__1.ForgeLinked, true).commands.get('linkedPlayerUpdate');
         const guild = this.guilds.cache.get(player.guildId);
         for (const command of commands) {
@@ -16,7 +16,9 @@ exports.default = new ForgeLinkedEventManager_1.ForgeLinkedEventHandler({
                 client: this,
                 command,
                 data: command.compiled.code,
-                extras: player,
+                // Keep the old flat fields for backwards compatibility while exposing
+                // the live player separately.
+                extras: { ...oldPlayer, player, oldPlayer },
             });
         }
     },

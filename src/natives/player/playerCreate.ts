@@ -1,4 +1,5 @@
 import { ArgType, NativeFunction } from '@tryforge/forgescript'
+import { ChannelType } from 'discord.js'
 
 import { ForgeLinked } from '../../index.js'
 
@@ -65,6 +66,20 @@ export default new NativeFunction({
       const linked = ctx.client.getExtension(ForgeLinked, true)?.lavalink
       if (!linked) return this.customError('ForgeLinked is not initialized')
 
+      if (voiceId.type !== ChannelType.GuildVoice && voiceId.type !== ChannelType.GuildStageVoice) {
+        return this.customError('The provided channel is not a voice channel')
+      }
+
+      if (typeof volume === 'number' && (volume < 0 || volume > 1000))
+        return this.customError('Volume must be between 0 and 1000')
+
+      if (node) {
+        const requestedNode = linked.nodeManager.nodes.get(node)
+        if (!requestedNode) return this.customError(`Lavalink node "${node}" was not found`)
+        if (!requestedNode.connected)
+          return this.customError(`Lavalink node "${node}" is not connected`)
+      }
+
       const connectedNodes = Array.from(linked.nodeManager.nodes.values()).filter(
         (n: any) => n.connected,
       )
@@ -77,9 +92,9 @@ export default new NativeFunction({
         guildId: guildId.id,
         voiceChannelId: voiceId.id,
         textChannelId: textId?.id || ctx.channel?.id,
-        volume: volume || 100,
+        volume: volume ?? 100,
         selfDeaf: selfDeaf ?? true,
-        selfMute: selfMute || false,
+        selfMute: selfMute ?? false,
         node: node || undefined,
       })
 

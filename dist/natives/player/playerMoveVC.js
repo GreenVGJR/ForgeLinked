@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const forgescript_1 = require("@tryforge/forgescript");
+const discord_js_1 = require("discord.js");
 const index_js_1 = require("../../index.js");
 exports.default = new forgescript_1.NativeFunction({
     name: '$playerMoveVC',
@@ -33,6 +34,14 @@ exports.default = new forgescript_1.NativeFunction({
             const player = linked.getPlayer(guildId.id);
             if (!player)
                 return this.customError('Player not found');
+            if (!player.node?.connected)
+                return this.customError('Lavalink node is not connected. Please wait for the node to reconnect.');
+            if (newVoiceChannelId.type !== discord_js_1.ChannelType.GuildVoice &&
+                newVoiceChannelId.type !== discord_js_1.ChannelType.GuildStageVoice) {
+                return this.customError('The provided channel is not a voice channel');
+            }
+            if (player.voiceChannelId === newVoiceChannelId.id)
+                return this.success(true);
             await player.changeVoiceState({ voiceChannelId: newVoiceChannelId.id });
             return this.success(true);
         }

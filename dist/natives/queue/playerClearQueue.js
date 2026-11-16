@@ -18,7 +18,7 @@ exports.default = new forgescript_1.NativeFunction({
         },
     ],
     output: forgescript_1.ArgType.Boolean,
-    execute(ctx, [guildId]) {
+    async execute(ctx, [guildId]) {
         try {
             const linked = ctx.client.getExtension(index_js_1.ForgeLinked, true)?.lavalink;
             if (!linked)
@@ -33,7 +33,7 @@ exports.default = new forgescript_1.NativeFunction({
             const lengthQ = player.queue.tracks.length;
             if (lengthQ <= 0)
                 return this.success(false);
-            player.queue.splice(0, lengthQ);
+            await player.queue.splice(0, lengthQ);
             return this.success(true);
         }
         catch (err) {

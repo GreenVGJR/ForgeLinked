@@ -1,4 +1,5 @@
 import { ArgType, NativeFunction } from '@tryforge/forgescript'
+import { SearchPlatform } from 'lavalink-client'
 
 import { ForgeLinked } from '../../index.js'
 import { getPlaylistInfo, stampPlaylistTracks } from '../../managers/trackPlaylist.js'
@@ -60,40 +61,53 @@ export default new NativeFunction({
           'Lavalink node is not connected. Please wait for the node to reconnect.',
         )
 
-      let supported: string[] = []
-      try {
-        const info = await player.node.fetchInfo()
-        supported = info?.sourceManagers || []
-      } catch {
-        // If fetchInfo fails, skip source validation and proceed
-      }
-
-      let finalQuery = query
-
-      if (source) {
-        if (supported.length && !supported.includes(source)) {
-          return this.customError(`Source '${source}' not supported by the Lavalink server`)
-        }
-        finalQuery = `${source}:${query}`
-      }
+      // lavalink-client resolves source aliases (youtube/ytsearch/yt, ytm, etc.)
+      // and validates them against the node. Do not duplicate that logic here.
+      const searchSource = source?.replace(/:+$/, '').trim()
 
       const result = await player
-        .search(finalQuery, {
-          requester: requester?.id ?? ctx.member?.id,
-        })
+        .search(
+          {
+            query,
+            source: (searchSource || undefined) as SearchPlatform | undefined,
+          },
+          requester ?? ctx.member,
+        )
         .catch((err: unknown) => {
           throw new Error(err instanceof Error ? err.message : String(err))
         })
 
-      if (!result || !result.tracks.length) return this.customError('No results found!')
+      if (!result) return this.customError('No results found!')
+
+      if (result.loadType === 'error') {
+        const exception = (result as any).exception
+        return this.customError(
+          `Search failed: ${exception?.message ?? 'The Lavalink node returned an error.'}`,
+        )
+      }
+
+      if (!result.tracks.length || result.loadType === 'empty')
+        return this.customError('No results found!')
 
       let tracks = result.tracks
-      if (limit) tracks = tracks.slice(0, limit)
+      if (typeof limit === 'number' && limit > 0) tracks = tracks.slice(0, limit)
 
       const isPlaylist = result.loadType === 'playlist'
       const playlistName = isPlaylist ? (result.playlist?.name ?? null) : null
       const playlistUri = isPlaylist ? (result.playlist?.uri ?? null) : null
       stampPlaylistTracks(tracks, isPlaylist ? result.playlist : null)
+
+      const trackRequester = result.tracks[0]?.requester as any
+      const requesterInfo = trackRequester
+        ? typeof trackRequester === 'string'
+          ? { requester: trackRequester }
+          : Object.assign(
+              typeof trackRequester.toJSON === 'function'
+                ? trackRequester.toJSON()
+                : { ...trackRequester },
+              { requester: trackRequester.id ?? trackRequester.requester ?? null },
+            )
+        : null
 
       return this.successJSON({
         status: 'success',
@@ -107,7 +121,7 @@ export default new NativeFunction({
         playlistName,
         playlistUri: playlistUri,
         playlistDuration: result.loadType === 'playlist' ? result.playlist?.duration : null,
-        requester: result.tracks[0]?.requester ?? null,
+        requester: requesterInfo,
         trackCount: tracks.length,
         tracks: tracks.map((track) => ({
           title: track.info.title,

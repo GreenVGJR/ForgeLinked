@@ -75,6 +75,10 @@ export class PlayerRelatingManager {
     try {
       const localCandidates = await this.relatedCandidates(lastPlayedTrack).catch(() => [])
 
+      // SoundCloud 403 returns null to abort the whole run without
+      // burning retries or Lavalink fallback searches.
+      if (localCandidates === null) return
+
       for (let attempt = 0; attempt <= this.autoplayOptions.retryLimit; attempt++) {
         await this.fillQueue(player, lastPlayedTrack, localCandidates)
         if (player.queue.tracks.length > 0) return
@@ -116,7 +120,9 @@ export class PlayerRelatingManager {
       if (!last || last === baseTrack) break
 
       baseTrack = last
-      candidates = await this.relatedCandidates(baseTrack).catch(() => [])
+      const nextCandidates = await this.relatedCandidates(baseTrack).catch(() => [])
+      if (nextCandidates === null) return
+      candidates = nextCandidates
       chains++
     }
   }
@@ -195,7 +201,7 @@ export class PlayerRelatingManager {
     return false
   }
 
-  private async relatedCandidates(track: Track): Promise<LocalRelatedCandidate[]> {
+  private async relatedCandidates(track: Track): Promise<LocalRelatedCandidate[] | null> {
     switch (this.sourceName(track)) {
       case 'youtube':
       case 'youtubemusic':
@@ -211,22 +217,125 @@ export class PlayerRelatingManager {
     }
   }
 
+  private async requestYoutubeWithRetry(
+    url: string,
+    init: RequestInit,
+  ): Promise<JsonResponse<any>> {
+    let res = await this.requestJson<any>(url, init)
+
+    for (let attempt = 1; attempt < 5; attempt++) {
+      if (res.status !== 403 && res.status !== 429) return res
+      res = await this.requestJson<any>(url, init)
+    }
+
+    return res
+  }
+
   private async youtubeRelated(track: Track): Promise<LocalRelatedCandidate[]> {
     const videoId = this.youtubeVideoId(track)
     if (!videoId) return []
+
+    const isMusic =
+      this.sourceName(track) === 'youtubemusic' ||
+      track.info.uri?.toLowerCase().includes('music.youtube.com')
+
+    // YouTube Music has its own radio queue. It is much more relevant than
+    // the regular YouTube related feed, so try it first and only fall back to
+    // YouTube when the music feed returns nothing.
+    if (isMusic) {
+      const musicCandidates = await this.youtubeMusicRelated(videoId)
+      if (musicCandidates.length) return musicCandidates
+    }
+
+    return this.youtubeVideoRelated(videoId)
+  }
+
+  private async youtubeMusicRelated(videoId: string): Promise<LocalRelatedCandidate[]> {
+    const visitorData = await this.auth.getYoutubeVisitor().catch(() => undefined)
+
+    const client: Record<string, unknown> = {
+      clientName: 67,
+      clientVersion: '1.20261231',
+      hl: 'en',
+      gl: 'US',
+      visitorData: visitorData ?? undefined,
+    }
+
+    const fields =
+      'contents.singleColumnMusicWatchNextResultsRenderer.tabbedRenderer.watchNextTabbedResultsRenderer.tabs.tabRenderer.content.musicQueueRenderer.content.playlistPanelRenderer.contents(playlistPanelVideoRenderer(videoId,title(runs(text)),shortBylineText(runs(text))))'
+
+    const res = await this.requestYoutubeWithRetry(
+      `https://music.youtube.com/youtubei/v1/next?prettyPrint=false&fields=${encodeURIComponent(fields)}`,
+      {
+        method: 'POST',
+        headers: {
+          ...localSearchHeaders,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          context: { client },
+          attestationRequest: { omitBotguardData: false },
+          playlistId: `RDAMVM${videoId}`,
+        }),
+      },
+    )
+
+    if (res.status >= 400 || !res.data) return []
+
+    const tabs =
+      res.data?.contents?.singleColumnMusicWatchNextResultsRenderer?.tabbedRenderer
+        ?.watchNextTabbedResultsRenderer?.tabs ?? []
+
+    const items: any[] = []
+    for (const tab of tabs) {
+      const contents =
+        tab?.tabRenderer?.content?.musicQueueRenderer?.content?.playlistPanelRenderer?.contents
+      if (Array.isArray(contents)) items.push(...contents)
+    }
+
+    return items
+      .map((item: any): LocalRelatedCandidate | null => {
+        const view = item.playlistPanelVideoRenderer
+        if (!view?.videoId || view.videoId === videoId) return null
+
+        const title = (view.title?.runs ?? [])
+          .map((run: any) => run?.text)
+          .filter(Boolean)
+          .join('')
+        const author = (view.shortBylineText?.runs ?? [])
+          .map((run: any) => run?.text)
+          .filter(Boolean)
+          .join('')
+
+        return {
+          source: 'youtubemusic',
+          identifier: view.videoId,
+          // Use the standard YouTube URL so Lavalink can resolve it even when
+          // its source regex does not accept music.youtube.com links.
+          url: `https://www.youtube.com/watch?v=${view.videoId}`,
+          title: title || undefined,
+          author: author || undefined,
+        }
+      })
+      .filter((item: LocalRelatedCandidate | null): item is LocalRelatedCandidate => !!item?.url)
+  }
+
+  private async youtubeVideoRelated(videoId: string): Promise<LocalRelatedCandidate[]> {
+    const visitorData = await this.auth.getYoutubeVisitor().catch(() => undefined)
 
     const client: Record<string, unknown> = {
       clientName: 1,
       clientVersion: '2.20261231',
       hl: 'en',
       gl: 'US',
+      visitorData: visitorData ?? undefined,
     }
 
-    const visitorData = await this.auth.getYoutubeVisitor().catch(() => undefined)
-    if (visitorData) client.visitorData = visitorData
+    const fields =
+      'contents.twoColumnWatchNextResults.secondaryResults.secondaryResults.results(lockupViewModel(contentId,contentType,metadata(lockupMetadataViewModel(title(content),metadata(contentMetadataViewModel(metadataRows(metadataParts(text(content)))))))))'
 
-    const res = await this.requestJson<any>(
-      'https://m.youtube.com/youtubei/v1/next?prettyPrint=false&fields=contents.twoColumnWatchNextResults.secondaryResults.secondaryResults.results(lockupViewModel)',
+    const res = await this.requestYoutubeWithRetry(
+      `https://m.youtube.com/youtubei/v1/next?prettyPrint=false&fields=${encodeURIComponent(fields)}`,
       {
         method: 'POST',
         headers: {
@@ -244,7 +353,12 @@ export class PlayerRelatingManager {
     return results
       .map((item: any): LocalRelatedCandidate | null => {
         const view = item.lockupViewModel
-        if (!view?.contentId || !String(view.contentType ?? '').endsWith('_VIDEO')) return null
+        const contentType = String(view?.contentType ?? '')
+        if (
+          !view?.contentId ||
+          (!contentType.endsWith('_VIDEO') && !contentType.endsWith('_MUSIC'))
+        )
+          return null
 
         return {
           source: 'youtube',
@@ -262,9 +376,12 @@ export class PlayerRelatingManager {
   private async soundCloudRelated(
     track: Track,
     refreshAuth = false,
-  ): Promise<LocalRelatedCandidate[]> {
+  ): Promise<LocalRelatedCandidate[] | null> {
     const clientId = await this.auth.getSoundCloudClientId(refreshAuth)
-    if (!clientId) return []
+    if (!clientId) {
+      if (!refreshAuth) return this.soundCloudRelated(track, true)
+      return []
+    }
 
     const trackId = await this.soundCloudTrackId(track, clientId)
     if (!trackId) {
@@ -274,13 +391,16 @@ export class PlayerRelatingManager {
 
     const url = new URL(`https://api-v2.soundcloud.com/tracks/${trackId}/related`)
     url.searchParams.set('client_id', clientId)
-    url.searchParams.set('limit', String(Math.min(this.autoplayOptions.maxFetchTracks, 20)))
+    url.searchParams.set('limit', String(this.relatedFetchLimit(20)))
 
     const res = await this.requestJson<{ collection?: any[] }>(url.toString(), {
       headers: localSearchHeaders,
     })
 
     if (res.status === 401 && !refreshAuth) return this.soundCloudRelated(track, true)
+
+    // SoundCloud 403 means this IP/token is blocked
+    if (res.status === 403) return null
 
     return (res.data?.collection ?? [])
       .map((item: any): LocalRelatedCandidate | null => {
@@ -304,8 +424,11 @@ export class PlayerRelatingManager {
     const trackId = this.spotifyTrackId(track)
     if (!trackId) return []
 
-    const auth = await this.auth.getSpotifyAuth(refreshAuth)
-    if (!auth) return []
+    let auth = await this.auth.getSpotifyAuth(refreshAuth)
+    if (!auth) {
+      if (!refreshAuth) auth = await this.auth.getSpotifyAuth(true)
+      if (!auth) return []
+    }
 
     const res = await this.requestJson<any>('https://api-partner.spotify.com/pathfinder/v2/query', {
       method: 'POST',
@@ -321,7 +444,7 @@ export class PlayerRelatingManager {
       body: JSON.stringify({
         variables: {
           uri: `spotify:track:${trackId}`,
-          limit: Math.min(this.autoplayOptions.maxFetchTracks, 20),
+          limit: this.relatedFetchLimit(20),
         },
         operationName: 'internalLinkRecommenderTrack',
         extensions: {
@@ -371,7 +494,7 @@ export class PlayerRelatingManager {
       url.searchParams.set('term', query)
       url.searchParams.set('media', 'music')
       url.searchParams.set('entity', 'song')
-      url.searchParams.set('limit', String(Math.min(this.autoplayOptions.maxFetchTracks, 50)))
+      url.searchParams.set('limit', String(this.relatedFetchLimit(50)))
 
       const res = await this.requestJson<ItunesSearchResponse>(url.toString(), {
         headers: localSearchHeaders,
@@ -582,6 +705,10 @@ export class PlayerRelatingManager {
     if (uri.includes('music.apple.com')) return 'applemusic'
     if (uri.includes('deezer.com')) return 'deezer'
     return ''
+  }
+
+  private relatedFetchLimit(cap: number): number {
+    return Math.min(Math.max(this.autoplayOptions.maxFetchTracks * 3, 5), cap)
   }
 
   private shuffleArray<T>(array: T[]): T[] {

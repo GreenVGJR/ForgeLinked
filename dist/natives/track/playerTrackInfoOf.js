@@ -33,10 +33,10 @@ exports.default = new forgescript_1.NativeFunction({
         const player = linked.getPlayer(guildId.id);
         if (!player)
             return this.customError('Player not found');
-        if (index < 0 || index >= player.queue.tracks.length)
+        if (!Number.isInteger(index) || index < 0 || index >= player.queue.tracks.length)
             return this.customError(`Index out of bounds — queue has ${player.queue.tracks.length} track(s)`);
         const track = player.queue.tracks[index];
-        return this.successJSON({ ...track, ...(0, trackPlaylist_js_1.getPlaylistInfo)(track) });
+        return this.successJSON({ ...track, ...track.info, ...(0, trackPlaylist_js_1.getPlaylistInfo)(track) });
     },
 });
 //# sourceMappingURL=playerTrackInfoOf.js.map

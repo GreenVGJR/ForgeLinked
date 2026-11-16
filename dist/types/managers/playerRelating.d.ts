@@ -24,7 +24,10 @@ export declare class PlayerRelatingManager {
     private queueLocalRelatedCandidate;
     private queueLavalinkSearchCandidate;
     private relatedCandidates;
+    private requestYoutubeWithRetry;
     private youtubeRelated;
+    private youtubeMusicRelated;
+    private youtubeVideoRelated;
     private soundCloudRelated;
     private spotifyRelated;
     private appleMusicRelated;
@@ -37,6 +40,7 @@ export declare class PlayerRelatingManager {
     private hasSimilarLocalTitle;
     private hasSimilarTitle;
     private sourceName;
+    private relatedFetchLimit;
     private shuffleArray;
     private normalize;
     private textQuery;

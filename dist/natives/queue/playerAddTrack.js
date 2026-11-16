@@ -42,6 +42,8 @@ exports.default = new forgescript_1.NativeFunction({
             const player = lavalink.getPlayer(guildId.id);
             if (!player)
                 return this.customError('Player not found for this guild.');
+            if (!player.node?.connected)
+                return this.customError('Lavalink node is not connected. Please wait for the node to reconnect.');
             if (!player.connected) {
                 try {
                     await player.connect();
@@ -50,22 +52,29 @@ exports.default = new forgescript_1.NativeFunction({
                     return this.customError(`Failed to connect to voice: ${connErr instanceof Error ? connErr.message : 'Unknown error'}`);
                 }
             }
-            const result = await player
-                .search({ query, source: source }, ctx.member)
-                .catch(() => null);
-            if (!result || !result.tracks.length || result.loadType === 'empty') {
-                return this.customError('No results found for the provided query.');
+            let result;
+            try {
+                result = await player.search({ query, source: source }, ctx.member);
             }
+            catch (err) {
+                return this.customError(`Search failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
+            if (!result)
+                return this.customError('No results found for the provided query.');
             if (result.loadType === 'error') {
-                return this.customError('An error occurred while fetching the track.');
+                const exception = result.exception;
+                return this.customError(`Search failed: ${exception?.message ?? 'The Lavalink node returned an error.'}`);
+            }
+            if (!result.tracks.length || result.loadType === 'empty') {
+                return this.customError('No results found for the provided query.');
             }
             if (result.loadType === 'playlist') {
                 (0, trackPlaylist_js_1.stampPlaylistTracks)(result.tracks, result.playlist);
-                player.queue.add(result.tracks);
+                await player.queue.add(result.tracks);
             }
             else {
                 (0, trackPlaylist_js_1.stampPlaylistTracks)(result.tracks.slice(0, 1), null);
-                player.queue.add(result.tracks[0]);
+                await player.queue.add(result.tracks[0]);
             }
             if (!player.playing && !player.paused) {
                 try {

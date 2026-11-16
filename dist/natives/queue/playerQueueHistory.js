@@ -30,10 +30,10 @@ exports.default = new forgescript_1.NativeFunction({
         const player = linked.getPlayer(guildId.id);
         if (!player)
             return this.customError('Player not found');
-        const currentId = player.queue.current?.info.identifier;
         const history = (player.queue.previous ?? [])
-            // Exclude the currently-playing track that lavalink-client pushes into previous[0]
-            .filter((t) => t.info.identifier !== currentId)
+            // Some lavalink-client versions keep the live track in previous[0].
+            // Compare identity so replays of the same track are not hidden.
+            .filter((t) => t !== player.queue.current)
             .map((t) => ({
             trackSource: t.info.sourceName,
             trackTitle: t.info.title,

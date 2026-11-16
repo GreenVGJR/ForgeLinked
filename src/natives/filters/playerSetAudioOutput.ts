@@ -66,18 +66,14 @@ export default new NativeFunction({
       for (const output of attempts) {
         try {
           await player.filterManager.setAudioOutput(output)
-          // Success — if we fell back, log it so the user knows
-          if (output !== audioOutput) {
-            this.customError(
-              `Failed to set audio output '${audioOutput}', fell back to '${output}'`,
-            )
-          }
-          return this.success()
+          return this.successJSON({
+            success: true,
+            requested: audioOutput,
+            applied: output,
+            fallback: output !== audioOutput,
+          })
         } catch (err) {
           lastErr = err
-          // Only continue looping if this wasn't the requested output (i.e., we are in fallback)
-          if (output === audioOutput) continue
-          break
         }
       }
 

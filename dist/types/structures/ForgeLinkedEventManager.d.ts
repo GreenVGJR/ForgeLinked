@@ -7,7 +7,7 @@ export interface IForgeLinkedEvents {
     linkedPlayerDisconnect: [Player, string];
     linkedPlayerMove: [Player, string, string];
     linkedPlayerSocketClosed: [Player, string];
-    linkedPlayerUpdate: [Player];
+    linkedPlayerUpdate: [any, Player];
     linkedPlayerMuteChange: [Player, boolean, boolean];
     linkedPlayerDeafChange: [Player, boolean, boolean];
     linkedPlayerSuppressChange: [Player, boolean];
@@ -30,6 +30,11 @@ export interface IForgeLinkedEvents {
     linkedLyricsNotFound: [Player, any, any];
     linkedDebug: [string, any];
     linkedNodeConnect: [any];
+    linkedNodeDisconnect: [any, any];
+    linkedNodeReconnecting: [any];
+    linkedNodeDestroy: [any, string | undefined];
+    linkedNodeResumed: [any, any, any[] | Record<string, any>];
+    linkedNodeError: [any, any];
 }
 export declare class ForgeLinkedEventHandler<T extends keyof IForgeLinkedEvents> extends BaseEventHandler<IForgeLinkedEvents, T> {
     register(client: ForgeClient): void;

@@ -27,7 +27,8 @@ exports.default = new forgescript_1.NativeFunction({
             node = linked.nodeManager.nodes.get(String(nodeId));
         }
         else {
-            node = Array.from(linked.nodeManager.nodes.values())[0];
+            const nodes = Array.from(linked.nodeManager.nodes.values());
+            node = nodes.find((candidate) => candidate.connected) ?? nodes[0];
         }
         if (!node)
             return this.customError('Lavalink node not found');

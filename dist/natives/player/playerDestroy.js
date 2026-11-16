@@ -37,7 +37,20 @@ exports.default = new forgescript_1.NativeFunction({
             const player = linked.getPlayer(guildId.id);
             if (!player)
                 return this.customError('Player not found');
-            await player.destroy(reason || undefined);
+            try {
+                await player.destroy(reason || undefined);
+            }
+            catch (err) {
+                // player.destroy() performs local cleanup before calling the Lavalink
+                // node. If the local player is gone and the node is unavailable, there
+                // is nothing left to clean up. The library skips its own playerDestroy
+                // emit when that final REST call throws, so emit it here.
+                if (!linked.players.has(guildId.id) && !player.node?.connected) {
+                    linked.emit('playerDestroy', player, reason || undefined);
+                    return this.success(true);
+                }
+                throw err;
+            }
             return this.success(true);
         }
         catch (err) {

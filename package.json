@@ -1,6 +1,6 @@
 {
   "name": "@tryforge/forge.linked",
-  "version": "2.2.3",
+  "version": "2.3.0",
   "description": "A package to extend forgescript to implement music capabilities via lavalink",
   "main": "dist/index.js",
   "scripts": {
@@ -19,18 +19,18 @@
   "type": "commonjs",
   "author": "Zack-911",
   "license": "GPL-3.0",
-  "packageManager": "pnpm@12.8.1",
+  "packageManager": "pnpm@12.21.0",
   "devDependencies": {
     "@trivago/prettier-plugin-sort-imports": "^6.0.2",
     "@tryforge/forgescript": "github:tryforge/ForgeScript#dev",
-    "@types/node": "^26.6.4",
-    "discord.js": "^14.27.0",
-    "dotenv": "^18.0.5",
-    "prettier": "^3.9.9",
+    "@types/node": "^26.6.6",
+    "discord.js": "^14.28.1",
+    "dotenv": "^18.0.10",
+    "prettier": "^3.10.1",
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "lavalink-client": "^2.11.0",
+    "lavalink-client": "^2.11.2",
     "opusscript": "^0.1.1",
     "tiny-typed-emitter": "^2.1.0"
   }

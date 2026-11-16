@@ -25,16 +25,16 @@ export default new NativeFunction({
     },
   ],
   output: ArgType.Boolean,
-  execute(ctx, [guildId, index]) {
+  async execute(ctx, [guildId, index]) {
     const linked = ctx.client.getExtension(ForgeLinked, true)?.lavalink
     if (!linked) return this.customError('ForgeLinked is not initialized')
     const player = linked.getPlayer(guildId.id)
     if (!player) return this.customError('Player not found')
-    if (index < 0 || index >= player.queue.tracks.length)
+    if (!Number.isInteger(index) || index < 0 || index >= player.queue.tracks.length)
       return this.customError(
         `Index out of bounds — queue has ${player.queue.tracks.length} track(s)`,
       )
-    player.queue.remove(index)
+    await player.queue.remove(index)
     return this.success(true)
   },
 })

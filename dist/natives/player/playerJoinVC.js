@@ -30,6 +30,8 @@ exports.default = new forgescript_1.NativeFunction({
             const player = linked.getPlayer(guildId.id);
             if (!player)
                 return this.customError('Player not found');
+            if (!player.node?.connected)
+                return this.customError('Lavalink node is not connected. Please wait for the node to reconnect.');
             await player.connect();
             return this.success(true);
         }

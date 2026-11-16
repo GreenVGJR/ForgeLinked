@@ -46,6 +46,8 @@ exports.default = new forgescript_1.NativeFunction({
                 return this.customError('Player not found');
             if (!player.node?.connected)
                 return this.customError('Lavalink node is not connected. Please wait for the node to reconnect.');
+            if (!player.queue.current && !player.queue.tracks.length)
+                return this.customError('There is nothing to skip.');
             if ((position || 0) > player.queue.tracks.length)
                 return this.customError('Cannot skip more than the queue size.');
             await player.skip(position || undefined, throwError || false);

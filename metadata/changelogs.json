@@ -240,5 +240,52 @@
       "timestamp": "2025-10-25T13:03:00.611Z",
       "author": "Zack-911"
     }
+  ],
+  "2.3.0": [
+    {
+      "message": "Feat: Added linkedNodeDisconnect, linkedNodeReconnecting, linkedNodeDestroy, linkedNodeResumed, and linkedNodeError events",
+      "timestamp": "2026-11-16T05:36:15.133Z",
+      "author": "GreenVGJR"
+    },
+    {
+      "message": "Feat: Added autoMove, catchLifeCycleRejections, enableDebugEvents, and decoupleAutoplay options",
+      "timestamp": "2026-11-16T05:35:15.133Z",
+      "author": "GreenVGJR"
+    },
+    {
+      "message": "Fix: linkedPlayerUpdate now receives the old snapshot and live player, and exposes the live player through $linkedEvent",
+      "timestamp": "2026-11-16T05:34:15.133Z",
+      "author": "GreenVGJR"
+    },
+    {
+      "message": "Fix: Autoplay no longer blocks linkedTrackEnd/linkedQueueEnd; last-track trackEnd is emitted and queue-empty destruction is deferred until background autoplay finishes",
+      "timestamp": "2026-11-16T05:33:15.133Z",
+      "author": "GreenVGJR"
+    },
+    {
+      "message": "Fix: YouTube autoplay uses the YouTube Music radio queue first and falls back to YouTube; 403/429 responses retry up to five times",
+      "timestamp": "2026-11-16T05:32:15.133Z",
+      "author": "GreenVGJR"
+    },
+    {
+      "message": "Fix: Spotify auth uses the TOTP token endpoint instead of embed scraping",
+      "timestamp": "2026-11-16T05:31:15.133Z",
+      "author": "GreenVGJR"
+    },
+    {
+      "message": "Fix: SoundCloud autoplay aborts on a 403 response without fallback searches; wider related-track lookup pools for SoundCloud, Spotify, and Apple Music",
+      "timestamp": "2026-11-16T05:30:15.133Z",
+      "author": "GreenVGJR"
+    },
+    {
+      "message": "Fix: Hardened native functions and error handling, including $playerCreate, $playerDestroy, $playerSearchTrack, $playerAddTrack, $playerSetAudioOutput, $playerSkip, $playerSeek, $playerReplay, $playerNodeStats, and $playerQueueHistory",
+      "timestamp": "2026-11-16T05:29:15.133Z",
+      "author": "GreenVGJR"
+    },
+    {
+      "message": "Docs: Replaced the setup example with a full configuration example and bumped package version to 2.3.0",
+      "timestamp": "2026-11-16T05:28:15.133Z",
+      "author": "GreenVGJR"
+    }
   ]
 }

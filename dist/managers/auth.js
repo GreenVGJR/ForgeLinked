@@ -1,17 +1,20 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalSearchAuthManager = exports.localSearchHeaders = exports.localSearchUserAgent = void 0;
-exports.localSearchUserAgent = 'Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0';
+const node_crypto_1 = __importDefault(require("node:crypto"));
+exports.localSearchUserAgent = 'Mozilla/5.0 (X11; Linux x86_64; rv:160.0) Gecko/20100101 Firefox/160.0';
+const spotifyTotpSecret = ',7/*F("rLJ2oxaKL^f+E1xvP@N';
+const spotifyTotpVersion = 61;
 exports.localSearchHeaders = {
     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Encoding': 'gzip, br',
     'Accept-Language': 'en-US,en;q=0.9',
-    Connection: 'keep-alive',
-    Priority: 'u=0, i',
     'Sec-Fetch-Dest': 'document',
     'Sec-Fetch-Mode': 'navigate',
     'Sec-Fetch-Site': 'none',
-    'Upgrade-Insecure-Requests': '1',
     'User-Agent': exports.localSearchUserAgent,
 };
 class LocalSearchAuthManager {
@@ -97,25 +100,34 @@ class LocalSearchAuthManager {
         }
     }
     async getSpotifyAccessToken() {
-        return this.getSpotifyEmbedToken();
-    }
-    async getSpotifyEmbedToken() {
-        const ids = [
-            'track/4cOdK2wGLETKBW3PvgPWqT',
-            'album/4NcNKEziN6KU6eBrKun7eg',
-            'artist/4sTQVOfp9vEMCemLw50sbu',
-            'track:46lFttIf5hnUZMGvjK0Wxo',
-        ];
-        const id = ids[Math.floor(Math.random() * ids.length)];
         try {
-            const text = await this.fetchText(`https://open.spotify.com/embed/${id}`, {
-                headers: exports.localSearchHeaders,
+            const totp = this.generateSpotifyTotp();
+            const data = await this.fetchJson(`https://open.spotify.com/api/token?reason=init&productType=mobile-web-player&totp=${totp}&totpServer=${totp}&totpVer=${spotifyTotpVersion}`, {
+                headers: {
+                    ...exports.localSearchHeaders,
+                    Accept: 'application/json',
+                    Origin: 'https://open.spotify.com',
+                    Referer: 'https://open.spotify.com/',
+                },
             });
-            return text.split('"accessToken":"')[1]?.split('"')[0];
+            return data.accessToken;
         }
         catch {
             return undefined;
         }
+    }
+    generateSpotifyTotp(timestamp = Date.now(), secret = spotifyTotpSecret) {
+        const counter = Math.floor(timestamp / 1000 / 30);
+        const counterBuffer = Buffer.alloc(8);
+        counterBuffer.writeBigUInt64BE(BigInt(counter));
+        const key = Buffer.from(Array.from(secret, (char, index) => char.charCodeAt(0) ^ ((index % 33) + 9)).join(''), 'utf8');
+        const hmac = node_crypto_1.default.createHmac('sha1', key).update(counterBuffer).digest();
+        const offset = hmac[hmac.length - 1] & 0xf;
+        const code = ((hmac[offset] & 0x7f) << 24) |
+            ((hmac[offset + 1] & 0xff) << 16) |
+            ((hmac[offset + 2] & 0xff) << 8) |
+            (hmac[offset + 3] & 0xff);
+        return String(code % 1_000_000).padStart(6, '0');
     }
     async fetchJson(url, init) {
         const text = await this.fetchText(url, init);

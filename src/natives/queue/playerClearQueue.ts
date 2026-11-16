@@ -18,7 +18,7 @@ export default new NativeFunction({
     },
   ],
   output: ArgType.Boolean,
-  execute(ctx, [guildId]) {
+  async execute(ctx, [guildId]) {
     try {
       const linked = ctx.client.getExtension(ForgeLinked, true)?.lavalink
       if (!linked) return this.customError('ForgeLinked is not initialized')
@@ -31,7 +31,7 @@ export default new NativeFunction({
       if (!player) return this.customError('Player not found')
       const lengthQ = player.queue.tracks.length
       if (lengthQ <= 0) return this.success(false)
-      player.queue.splice(0, lengthQ)
+      await player.queue.splice(0, lengthQ)
       return this.success(true)
     } catch (err) {
       return this.customError(

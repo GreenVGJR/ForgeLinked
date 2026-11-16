@@ -33,6 +33,7 @@ export default new NativeFunction({
         return this.customError(
           'Lavalink node is not connected. Please wait for the node to reconnect.',
         )
+      if (!player.queue.current) return this.customError('No track is currently playing')
       await player.seek(0)
       return this.success(true)
     } catch (err) {

@@ -1,4 +1,5 @@
 import { ArgType, NativeFunction } from '@tryforge/forgescript'
+import { ChannelType } from 'discord.js'
 
 import { ForgeLinked } from '../../index.js'
 
@@ -31,6 +32,17 @@ export default new NativeFunction({
       if (!linked) return this.customError('ForgeLinked is not initialized')
       const player = linked.getPlayer(guildId.id)
       if (!player) return this.customError('Player not found')
+      if (!player.node?.connected)
+        return this.customError(
+          'Lavalink node is not connected. Please wait for the node to reconnect.',
+        )
+      if (
+        newVoiceChannelId.type !== ChannelType.GuildVoice &&
+        newVoiceChannelId.type !== ChannelType.GuildStageVoice
+      ) {
+        return this.customError('The provided channel is not a voice channel')
+      }
+      if (player.voiceChannelId === newVoiceChannelId.id) return this.success(true)
       await player.changeVoiceState({ voiceChannelId: newVoiceChannelId.id })
       return this.success(true)
     } catch (err) {

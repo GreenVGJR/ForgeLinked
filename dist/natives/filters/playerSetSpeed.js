@@ -41,8 +41,8 @@ exports.default = new forgescript_1.NativeFunction({
                 return this.customError('Lavalink node is not connected. Please wait for the node to reconnect.');
             if (speed <= 0)
                 return this.customError('Speed must be greater than 0 (use 1 to reset)');
-            const res = await player.filterManager.setSpeed(speed);
-            return this.successJSON(res);
+            await player.filterManager.setSpeed(speed);
+            return this.success(true);
         }
         catch (err) {
             return this.customError(`Failed to set speed: ${err instanceof Error ? err.message : String(err)}`);

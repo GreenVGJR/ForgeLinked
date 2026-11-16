@@ -33,7 +33,15 @@ export default new NativeFunction({
         return this.customError(
           'Lavalink node is not connected. Please wait for the node to reconnect.',
         )
-      await player.pause()
+      if (player.paused && !player.playing) return this.success(true)
+
+      const wasPaused = player.paused
+      try {
+        await player.pause()
+      } catch (err) {
+        player.paused = wasPaused
+        throw err
+      }
       return this.success(true)
     } catch (err) {
       return this.customError(

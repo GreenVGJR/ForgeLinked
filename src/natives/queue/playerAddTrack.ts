@@ -44,6 +44,10 @@ export default new NativeFunction({
       const player = lavalink.getPlayer(guildId.id)
 
       if (!player) return this.customError('Player not found for this guild.')
+      if (!player.node?.connected)
+        return this.customError(
+          'Lavalink node is not connected. Please wait for the node to reconnect.',
+        )
 
       if (!player.connected) {
         try {
@@ -55,24 +59,34 @@ export default new NativeFunction({
         }
       }
 
-      const result = await player
-        .search({ query, source: source as SearchPlatform }, ctx.member)
-        .catch(() => null)
-
-      if (!result || !result.tracks.length || result.loadType === 'empty') {
-        return this.customError('No results found for the provided query.')
+      let result: any
+      try {
+        result = await player.search({ query, source: source as SearchPlatform }, ctx.member)
+      } catch (err) {
+        return this.customError(
+          `Search failed: ${err instanceof Error ? err.message : String(err)}`,
+        )
       }
 
+      if (!result) return this.customError('No results found for the provided query.')
+
       if (result.loadType === 'error') {
-        return this.customError('An error occurred while fetching the track.')
+        const exception = (result as any).exception
+        return this.customError(
+          `Search failed: ${exception?.message ?? 'The Lavalink node returned an error.'}`,
+        )
+      }
+
+      if (!result.tracks.length || result.loadType === 'empty') {
+        return this.customError('No results found for the provided query.')
       }
 
       if (result.loadType === 'playlist') {
         stampPlaylistTracks(result.tracks, result.playlist)
-        player.queue.add(result.tracks)
+        await player.queue.add(result.tracks)
       } else {
         stampPlaylistTracks(result.tracks.slice(0, 1), null)
-        player.queue.add(result.tracks[0])
+        await player.queue.add(result.tracks[0])
       }
 
       if (!player.playing && !player.paused) {
@@ -95,7 +109,7 @@ export default new NativeFunction({
       // Total playlist duration in ms (sum of all tracks)
       const playlistDurationMs: number =
         result.loadType === 'playlist'
-          ? result.tracks.reduce((acc, t) => acc + (t.info.duration ?? 0), 0)
+          ? result.tracks.reduce((acc: number, t: any) => acc + (t.info.duration ?? 0), 0)
           : rawDurationMs
 
       return this.successJSON({

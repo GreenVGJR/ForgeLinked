@@ -22,6 +22,8 @@ class ForgeLinked extends forgescript_1.ForgeExtension {
     lavalink;
     commands;
     emitter = new tiny_typed_emitter_1.TypedEmitter();
+    lastEndedTrack = new Map();
+    pendingAutoplay = new Set();
     constructor(options) {
         super();
         this.options = options;
@@ -40,6 +42,11 @@ class ForgeLinked extends forgescript_1.ForgeExtension {
             autoSkip: this.options.autoSkip ?? true,
             autoSkipOnResolveError: this.options.autoSkipOnResolveError ?? true,
             emitNewSongsOnly: this.options.emitNewSongsOnly ?? true,
+            autoMove: this.options.autoMove ?? true,
+            catchLifeCycleRejections: this.options.catchLifeCycleRejections ?? true,
+            advancedOptions: {
+                enableDebugEvents: this.options.enableDebugEvents ?? false,
+            },
             playerOptions: {
                 applyVolumeAsFilter: this.options.playerOptions?.applyVolumeAsFilter ?? false,
                 clientBasedPositionUpdateInterval: this.options.playerOptions?.clientBasedPositionUpdateInterval ?? 50,
@@ -69,6 +76,20 @@ class ForgeLinked extends forgescript_1.ForgeExtension {
                 delete track.pluginInfo.clientData.previousTrack;
             }
         });
+        // lavalink-client does not emit trackEnd for the last track when the queue
+        // empties; queueEnd is emitted instead. Emit the missing trackEnd once,
+        // before the generic queueEnd forwarding below, so listeners still see
+        // end -> queueEnd (and end -> start when autoplay picks a new track).
+        this.lavalink.on('trackEnd', (player, track, payload) => this._handleTrackEnd(player, track, payload));
+        this.lavalink.on('queueEnd', (player, track, payload) => this._handleQueueEnd(player, track, payload));
+        this.lavalink.on('playerDestroy', (player) => {
+            this.lastEndedTrack.delete(player.guildId);
+            this.pendingAutoplay.delete(player.guildId);
+        });
+        // While a background autoplay lookup is pending, keep the player alive
+        // long enough for it to finish instead of letting the queue-empty timer
+        // destroy it mid-search.
+        this.lavalink.on('playerQueueEmptyStart', (player, timeoutMs) => this._handleQueueEmptyStart(player, timeoutMs));
         forgescript_1.EventManager.load('ForgeLinked', __dirname + `/events`);
         if (this.options.events?.length) {
             this.client.events.load('ForgeLinked', this.options.events);
@@ -89,15 +110,29 @@ class ForgeLinked extends forgescript_1.ForgeExtension {
         client.on('raw', sendRawData);
         this.load(path_1.default.join(__dirname, './natives'));
         client.on('clientReady', async () => {
-            // Register the connect listener BEFORE init() so we never miss a node
-            // connection - including fallback reconnects when one of multiple nodes
-            // fails during initialisation and comes back later.
+            // Register node listeners BEFORE init() so we never miss a node
+            // connection or lifecycle event - including fallback reconnects when
+            // one of multiple nodes fails during initialisation and comes back later.
             this.lavalink.nodeManager.on('connect', (node) => {
-                const nodeData = {
-                    id: node.id,
-                    info: node.info,
-                };
-                this.emitter.emit('linkedNodeConnect', [nodeData]);
+                const snapshot = this._nodeSnapshot(node);
+                // The 0-key keeps the old `$linkedEvent[node][0]` shape working while
+                // new scripts can use `$linkedEvent[node;id]` directly.
+                this.emitter.emit('linkedNodeConnect', {
+                    ...snapshot,
+                    0: { id: snapshot.id, info: snapshot.info },
+                });
+            });
+            this.lavalink.nodeManager.on('disconnect', (node, payload) => {
+                this.emitter.emit('linkedNodeDisconnect', this._nodeSnapshot(node), payload);
+            });
+            this.lavalink.nodeManager.on('reconnecting', (node) => {
+                this.emitter.emit('linkedNodeReconnecting', this._nodeSnapshot(node));
+            });
+            this.lavalink.nodeManager.on('destroy', (node, reason) => {
+                this.emitter.emit('linkedNodeDestroy', this._nodeSnapshot(node), reason);
+            });
+            this.lavalink.nodeManager.on('resumed', (node, payload, players) => {
+                this.emitter.emit('linkedNodeResumed', this._nodeSnapshot(node), payload, players);
             });
             try {
                 await this.lavalink.init({
@@ -115,7 +150,19 @@ class ForgeLinked extends forgescript_1.ForgeExtension {
             }
         });
         if (this.options.events?.length) {
+            // Node lifecycle events are emitted directly from nodeManager listeners,
+            // not from LavalinkManager, so they must not be forwarded here.
+            const nodeLifecycleEvents = new Set([
+                'linkedNodeConnect',
+                'linkedNodeDisconnect',
+                'linkedNodeReconnecting',
+                'linkedNodeDestroy',
+                'linkedNodeResumed',
+                'linkedNodeError',
+            ]);
             for (const linkedEvent of this.options.events) {
+                if (nodeLifecycleEvents.has(linkedEvent))
+                    continue;
                 const lavalinkEvent = linkedEvent.startsWith('linked')
                     ? linkedEvent.charAt(6).toLowerCase() + linkedEvent.slice(7)
                     : linkedEvent;
@@ -126,6 +173,9 @@ class ForgeLinked extends forgescript_1.ForgeExtension {
         }
         this.lavalink.nodeManager.on('error', (node, error) => {
             forgescript_1.Logger.error(`Lavalink node "${node.id}" error:`, error);
+            if (this.emitter.listenerCount('linkedNodeError') > 0) {
+                this.emitter.emit('linkedNodeError', this._nodeSnapshot(node), this._errorInfo(error));
+            }
             this._emitError(error);
         });
         console.debug(`ForgeLink: Initialized in ${Date.now() - start}ms`);
@@ -135,15 +185,162 @@ class ForgeLinked extends forgescript_1.ForgeExtension {
             return;
         this.emitter.emit('error', error instanceof Error ? error : new Error(String(error)));
     }
+    _handleTrackEnd(player, track, payload) {
+        if (!player?.guildId)
+            return;
+        this.lastEndedTrack.set(player.guildId, { track, payload });
+    }
+    _handleQueueEmptyStart(player, timeoutMs) {
+        if (!this.pendingAutoplay.has(player.guildId))
+            return;
+        const timer = player.getData('internal_queueempty');
+        if (timer)
+            clearTimeout(timer);
+        player.setData('internal_queueempty', undefined);
+        player.setData('forgelinked_queueempty_delay', typeof timeoutMs === 'number' ? timeoutMs : 30000);
+    }
+    _deferQueueEmptyTimer(player) {
+        if (!this.pendingAutoplay.has(player.guildId))
+            return;
+        // playerQueueEmptyStart is emitted before lavalink-client installs its
+        // timeout, so clear the timer again once queueEnd is emitted.
+        const timer = player.getData('internal_queueempty');
+        if (timer)
+            clearTimeout(timer);
+        player.setData('internal_queueempty', undefined);
+    }
+    _finishQueueEmptyWait(player) {
+        const delay = player.getData('forgelinked_queueempty_delay');
+        if (typeof delay !== 'number')
+            return;
+        player.deleteData('forgelinked_queueempty_delay');
+        if (!this.lavalink.players.has(player.guildId))
+            return;
+        if (player.playing || player.queue.current || player.queue.tracks.length > 0) {
+            this.lavalink.emit('playerQueueEmptyCancel', player);
+            return;
+        }
+        this._armQueueEmptyTimer(player, delay);
+    }
+    _armQueueEmptyTimer(player, delay) {
+        const timer = player.getData('internal_queueempty');
+        if (timer)
+            clearTimeout(timer);
+        player.setData('internal_queueempty', setTimeout(() => {
+            player.setData('internal_queueempty', undefined);
+            if (!this.lavalink.players.has(player.guildId))
+                return;
+            if (player.queue.current) {
+                this.lavalink.emit('playerQueueEmptyCancel', player);
+                return;
+            }
+            this.lavalink.emit('playerQueueEmptyEnd', player);
+            player.destroy('QueueEmpty').catch((error) => {
+                if (!this.lavalink.options.catchLifeCycleRejections)
+                    throw error;
+            });
+        }, Math.max(delay, 0)));
+    }
+    _handleQueueEnd(player, track, payload) {
+        if (!player?.guildId)
+            return;
+        this._deferQueueEmptyTimer(player);
+        const last = this.lastEndedTrack.get(player.guildId);
+        this.lastEndedTrack.delete(player.guildId);
+        // lavalink-client reuses the same payload object when it emits trackEnd
+        // from inside queueEnd's autoplay branch.
+        const alreadyEmitted = !!last && last.track === track && last.payload === payload;
+        if (alreadyEmitted)
+            return;
+        if (!track || payload?.type !== 'TrackEndEvent')
+            return;
+        if (this.emitter.listenerCount('linkedTrackEnd') === 0)
+            return;
+        this.emitter.emit('linkedTrackEnd', player, track, payload);
+    }
+    _nodeSnapshot(node) {
+        return {
+            id: node.id,
+            info: node.info ?? null,
+            connected: node.connected === true,
+            stats: node.stats ?? null,
+            sessionId: node.sessionId ?? null,
+        };
+    }
+    _errorInfo(error) {
+        if (error instanceof Error) {
+            return {
+                name: error.name,
+                message: error.message,
+                stack: error.stack ?? null,
+            };
+        }
+        return {
+            name: 'Error',
+            message: String(error),
+            stack: null,
+        };
+    }
     _buildAutoPlayFunction() {
-        if (this.options.autoPlayFunction)
-            return this.options.autoPlayFunction;
-        const relating = new playerRelating_js_1.PlayerRelatingManager({
-            defaultAutoPlaySource: this.options.defaultAutoPlaySource,
-            defaultSearchPlatform: this.options.playerOptions?.defaultSearchPlatform,
-            autoplayOptions: this.options.autoplayOptions,
-        });
-        return (player, lastPlayedTrack) => relating.autoplay(player, lastPlayedTrack);
+        const custom = this.options.autoPlayFunction;
+        const relating = custom
+            ? undefined
+            : new playerRelating_js_1.PlayerRelatingManager({
+                defaultAutoPlaySource: this.options.defaultAutoPlaySource,
+                defaultSearchPlatform: this.options.playerOptions?.defaultSearchPlatform,
+                autoplayOptions: this.options.autoplayOptions,
+            });
+        const runAutoplay = custom ??
+            ((player, lastPlayedTrack) => relating.autoplay(player, lastPlayedTrack));
+        if (this.options.decoupleAutoplay === false)
+            return runAutoplay;
+        const lockKey = 'forgelinked_autoplay_background';
+        return async (player, lastPlayedTrack) => {
+            if (!player || !lastPlayedTrack)
+                return;
+            // The built-in engine already no-ops when autoplay is disabled; avoid
+            // arming the background lock/timer extension in that case.
+            if (!custom && !player.autoPlay)
+                return;
+            if (player.getData(lockKey))
+                return;
+            player.setData(lockKey, true);
+            this.pendingAutoplay.add(player.guildId);
+            // Defer the actual search until after lavalink-client has emitted
+            // queueEnd/trackEnd. The library awaits this autoplay function, so it
+            // must resolve immediately.
+            setImmediate(() => {
+                if (!this.lavalink.players.has(player.guildId)) {
+                    player.deleteData(lockKey);
+                    this.pendingAutoplay.delete(player.guildId);
+                    return;
+                }
+                const run = Promise.resolve().then(() => runAutoplay(player, lastPlayedTrack));
+                void run
+                    .then(async () => {
+                    if (!this.lavalink.players.has(player.guildId))
+                        return;
+                    if (player.queue.tracks.length === 0)
+                        return;
+                    if (player.playing || player.queue.current)
+                        return;
+                    if (this.lavalink.options.autoSkip === false) {
+                        // Match lavalink-client's old behavior: autoplay fills the
+                        // queue, but autoSkip=false means it is not started.
+                        player.queue.current = player.queue.tracks.shift() ?? null;
+                        await player.queue.utils.save().catch(() => undefined);
+                        return;
+                    }
+                    await player.play({ noReplace: true, paused: false });
+                })
+                    .catch((err) => forgescript_1.Logger.error('ForgeLinked autoplay background error:', err))
+                    .finally(() => {
+                    player.deleteData(lockKey);
+                    this.pendingAutoplay.delete(player.guildId);
+                    this._finishQueueEmptyWait(player);
+                });
+            });
+        };
     }
 }
 exports.ForgeLinked = ForgeLinked;

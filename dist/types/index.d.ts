@@ -8,6 +8,28 @@ export interface ForgeLinkSetupOptions {
     autoSkip?: boolean;
     autoSkipOnResolveError?: boolean;
     emitNewSongsOnly?: boolean;
+    /**
+     * Move players to another healthy node when their current node disconnects.
+     * Only takes effect when another connected node is available. Defaults to true.
+     */
+    autoMove?: boolean;
+    /**
+     * Catch lifecycle promise rejections from lavalink-client instead of letting
+     * them become unhandled rejections (which can terminate Node). Defaults to true.
+     */
+    catchLifeCycleRejections?: boolean;
+    /**
+     * Enable lavalink-client debug events. Required for the `linkedDebug` event
+     * to fire. Defaults to false.
+     */
+    enableDebugEvents?: boolean;
+    /**
+     * Run autoplay outside lavalink-client's queueEnd await cycle so
+     * linkedTrackEnd / linkedQueueEnd fire immediately, then start the autoplay
+     * track when it arrives. Set to false to restore the old blocking behavior.
+     * Defaults to true.
+     */
+    decoupleAutoplay?: boolean;
     requesterTransformer?: (requester: unknown) => unknown;
     /**
      * Custom autoplay function. When provided, this fully overrides the built-in
@@ -60,9 +82,19 @@ export declare class ForgeLinked extends ForgeExtension {
     lavalink: LavalinkManager;
     commands: ForgeLinkedCommandManager;
     private emitter;
+    private lastEndedTrack;
+    private pendingAutoplay;
     constructor(options: ForgeLinkSetupOptions);
     init(client: ForgeClient): Promise<void>;
     private _emitError;
+    private _handleTrackEnd;
+    private _handleQueueEmptyStart;
+    private _deferQueueEmptyTimer;
+    private _finishQueueEmptyWait;
+    private _armQueueEmptyTimer;
+    private _handleQueueEnd;
+    private _nodeSnapshot;
+    private _errorInfo;
     private _buildAutoPlayFunction;
 }
 export type { PlayerEvents, SearchPlatform, LavalinkNodeOptions };
