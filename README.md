@@ -61,7 +61,7 @@ const lavalink = new ForgeLinked({
   // Autoplay
   // These options only affect the **built-in** autoplay engine.
   // Autoplay must also be enabled per-player using `$playerSetAutoPlay` or `$playerToggleAutoPlay`.
-  defaultAutoPlaySource: 'ytsearch',
+  defaultAutoPlaySource: 'youtube',
   autoplayOptions: {
     maxFetchTracks: 1, // maximum tracks to queue per trigger (pre-fills the queue)
     retryLimit: 3, // retries if no track could be added
@@ -75,7 +75,7 @@ const lavalink = new ForgeLinked({
   playerOptions: {
     applyVolumeAsFilter: false,
     clientBasedPositionUpdateInterval: 50,
-    defaultSearchPlatform: 'ytsearch',
+    defaultSearchPlatform: 'youtube',
     volumeDecrementer: 0.75,
     useUnresolvedData: true,
     onDisconnect: {

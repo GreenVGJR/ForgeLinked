@@ -24,6 +24,8 @@ class ForgeLinked extends forgescript_1.ForgeExtension {
     emitter = new tiny_typed_emitter_1.TypedEmitter();
     lastEndedTrack = new Map();
     pendingAutoplay = new Set();
+    relating;
+    autoplayState = new Map();
     constructor(options) {
         super();
         this.options = options;
@@ -71,9 +73,13 @@ class ForgeLinked extends forgescript_1.ForgeExtension {
             linksWhitelist: this.options.linksWhitelist ?? [],
         });
         this.commands = new ForgeLinkedCommandManager_js_1.ForgeLinkedCommandManager(this.client);
-        this.lavalink.on('trackStart', (_player, track) => {
+        this.lavalink.on('trackStart', (player, track) => {
             if (track?.pluginInfo?.clientData?.previousTrack) {
                 delete track.pluginInfo.clientData.previousTrack;
+            }
+            if (player && track) {
+                player.deleteData('forgelinked_autoplay_filled');
+                this._prefetchAutoplay(player, track);
             }
         });
         // lavalink-client does not emit trackEnd for the last track when the queue
@@ -85,6 +91,8 @@ class ForgeLinked extends forgescript_1.ForgeExtension {
         this.lavalink.on('playerDestroy', (player) => {
             this.lastEndedTrack.delete(player.guildId);
             this.pendingAutoplay.delete(player.guildId);
+            this.clearAutoplayState(player.guildId);
+            player.deleteData('forgelinked_autoplay_filled');
         });
         // While a background autoplay lookup is pending, keep the player alive
         // long enough for it to finish instead of letting the queue-empty timer
@@ -152,16 +160,20 @@ class ForgeLinked extends forgescript_1.ForgeExtension {
         if (this.options.events?.length) {
             // Node lifecycle events are emitted directly from nodeManager listeners,
             // not from LavalinkManager, so they must not be forwarded here.
-            const nodeLifecycleEvents = new Set([
+            // linkedQueueEnd is handled in _handleQueueEnd for autoplay suppression.
+            const directlyHandledEvents = new Set([
                 'linkedNodeConnect',
                 'linkedNodeDisconnect',
                 'linkedNodeReconnecting',
                 'linkedNodeDestroy',
                 'linkedNodeResumed',
                 'linkedNodeError',
+                // Emitted from _handleQueueEnd so a successful autoplay fill can
+                // suppress it.
+                'linkedQueueEnd',
             ]);
             for (const linkedEvent of this.options.events) {
-                if (nodeLifecycleEvents.has(linkedEvent))
+                if (directlyHandledEvents.has(linkedEvent))
                     continue;
                 const lavalinkEvent = linkedEvent.startsWith('linked')
                     ? linkedEvent.charAt(6).toLowerCase() + linkedEvent.slice(7)
@@ -184,6 +196,76 @@ class ForgeLinked extends forgescript_1.ForgeExtension {
         if (this.emitter.listenerCount('error') === 0)
             return;
         this.emitter.emit('error', error instanceof Error ? error : new Error(String(error)));
+    }
+    /** Drop all cached/in-flight autoplay work for a guild. */
+    clearAutoplayState(guildId) {
+        this.autoplayState.delete(guildId);
+        this.pendingAutoplay.delete(guildId);
+    }
+    _getAutoplayState(guildId) {
+        let state = this.autoplayState.get(guildId);
+        if (!state) {
+            state = { generation: 0 };
+            this.autoplayState.set(guildId, state);
+        }
+        return state;
+    }
+    _autoplayTrackKey(track) {
+        if (!track)
+            return '';
+        const info = track.info ?? {};
+        return String(info.uri || info.identifier || '');
+    }
+    /**
+     * Race a lookup against the configured timeout. A timeout (or retryDuration
+     * of 0, meaning no cap) is reported as a miss so callers fail straight away.
+     */
+    _withAutoplayTimeout(promise, ms) {
+        if (!Number.isFinite(ms) || ms <= 0)
+            return promise.then((value) => value);
+        let timer;
+        const timeout = new Promise((resolve) => {
+            timer = setTimeout(() => resolve(null), ms);
+        });
+        return Promise.race([promise, timeout]).finally(() => {
+            if (timer)
+                clearTimeout(timer);
+        });
+    }
+    /** Start the background lookup at trackStart without touching the queue. */
+    _prefetchAutoplay(player, track) {
+        if (this.options.decoupleAutoplay === false)
+            return;
+        if (!this.relating)
+            return;
+        if (!player?.guildId || !track)
+            return;
+        if (!player.autoPlay)
+            return;
+        if (player.queue.tracks.length > 1)
+            return;
+        const state = this._getAutoplayState(player.guildId);
+        const baseId = this._autoplayTrackKey(track);
+        if (state.cache?.baseId === baseId || state.inFlight?.baseId === baseId)
+            return;
+        state.cache = undefined;
+        state.generation++;
+        const token = state.generation;
+        const promise = Promise.resolve()
+            .then(() => this.relating.collectTracks(player, track))
+            .catch(() => []);
+        state.inFlight = { baseId, token, promise };
+        this.pendingAutoplay.add(player.guildId);
+        void promise.then((tracks) => {
+            const current = this._getAutoplayState(player.guildId);
+            if (current.inFlight?.token !== token)
+                return;
+            current.inFlight = undefined;
+            if (this.lavalink.players.has(player.guildId) && tracks?.length) {
+                current.cache = { baseId, tracks };
+            }
+            this.pendingAutoplay.delete(player.guildId);
+        });
     }
     _handleTrackEnd(player, track, payload) {
         if (!player?.guildId)
@@ -209,38 +291,6 @@ class ForgeLinked extends forgescript_1.ForgeExtension {
             clearTimeout(timer);
         player.setData('internal_queueempty', undefined);
     }
-    _finishQueueEmptyWait(player) {
-        const delay = player.getData('forgelinked_queueempty_delay');
-        if (typeof delay !== 'number')
-            return;
-        player.deleteData('forgelinked_queueempty_delay');
-        if (!this.lavalink.players.has(player.guildId))
-            return;
-        if (player.playing || player.queue.current || player.queue.tracks.length > 0) {
-            this.lavalink.emit('playerQueueEmptyCancel', player);
-            return;
-        }
-        this._armQueueEmptyTimer(player, delay);
-    }
-    _armQueueEmptyTimer(player, delay) {
-        const timer = player.getData('internal_queueempty');
-        if (timer)
-            clearTimeout(timer);
-        player.setData('internal_queueempty', setTimeout(() => {
-            player.setData('internal_queueempty', undefined);
-            if (!this.lavalink.players.has(player.guildId))
-                return;
-            if (player.queue.current) {
-                this.lavalink.emit('playerQueueEmptyCancel', player);
-                return;
-            }
-            this.lavalink.emit('playerQueueEmptyEnd', player);
-            player.destroy('QueueEmpty').catch((error) => {
-                if (!this.lavalink.options.catchLifeCycleRejections)
-                    throw error;
-            });
-        }, Math.max(delay, 0)));
-    }
     _handleQueueEnd(player, track, payload) {
         if (!player?.guildId)
             return;
@@ -250,13 +300,19 @@ class ForgeLinked extends forgescript_1.ForgeExtension {
         // lavalink-client reuses the same payload object when it emits trackEnd
         // from inside queueEnd's autoplay branch.
         const alreadyEmitted = !!last && last.track === track && last.payload === payload;
-        if (alreadyEmitted)
+        if (!alreadyEmitted &&
+            track &&
+            payload?.type === 'TrackEndEvent' &&
+            this.emitter.listenerCount('linkedTrackEnd') > 0) {
+            this.emitter.emit('linkedTrackEnd', player, track, payload);
+        }
+        // A successful autoplay fill means this queue-end was immediately resolved
+        // by autoplay, so do not notify listeners of an empty queue.
+        if (player.getData('forgelinked_autoplay_filled')) {
+            player.deleteData('forgelinked_autoplay_filled');
             return;
-        if (!track || payload?.type !== 'TrackEndEvent')
-            return;
-        if (this.emitter.listenerCount('linkedTrackEnd') === 0)
-            return;
-        this.emitter.emit('linkedTrackEnd', player, track, payload);
+        }
+        this.emitter.emit('linkedQueueEnd', player, track, payload);
     }
     _nodeSnapshot(node) {
         return {
@@ -283,63 +339,77 @@ class ForgeLinked extends forgescript_1.ForgeExtension {
     }
     _buildAutoPlayFunction() {
         const custom = this.options.autoPlayFunction;
-        const relating = custom
+        this.relating = custom
             ? undefined
             : new playerRelating_js_1.PlayerRelatingManager({
                 defaultAutoPlaySource: this.options.defaultAutoPlaySource,
                 defaultSearchPlatform: this.options.playerOptions?.defaultSearchPlatform,
                 autoplayOptions: this.options.autoplayOptions,
             });
-        const runAutoplay = custom ??
-            ((player, lastPlayedTrack) => relating.autoplay(player, lastPlayedTrack));
-        if (this.options.decoupleAutoplay === false)
-            return runAutoplay;
-        const lockKey = 'forgelinked_autoplay_background';
+        const timeout = this.options.autoplayOptions?.retryDuration ?? 5000;
+        const collect = (player, track) => this.relating ? this.relating.collectTracks(player, track) : Promise.resolve([]);
         return async (player, lastPlayedTrack) => {
             if (!player || !lastPlayedTrack)
                 return;
-            // The built-in engine already no-ops when autoplay is disabled; avoid
-            // arming the background lock/timer extension in that case.
-            if (!custom && !player.autoPlay)
+            if (!custom && !player.autoPlay) {
+                const state = this._getAutoplayState(player.guildId);
+                state.cache = undefined;
+                state.inFlight = undefined;
+                state.generation++;
+                player.setData('forgelinked_autoplay_filled', false);
                 return;
-            if (player.getData(lockKey))
-                return;
-            player.setData(lockKey, true);
-            this.pendingAutoplay.add(player.guildId);
-            // Defer the actual search until after lavalink-client has emitted
-            // queueEnd/trackEnd. The library awaits this autoplay function, so it
-            // must resolve immediately.
-            setImmediate(() => {
-                if (!this.lavalink.players.has(player.guildId)) {
-                    player.deleteData(lockKey);
-                    this.pendingAutoplay.delete(player.guildId);
+            }
+            const guildId = player.guildId;
+            const state = this._getAutoplayState(guildId);
+            const baseId = this._autoplayTrackKey(lastPlayedTrack);
+            this.pendingAutoplay.add(guildId);
+            try {
+                if (custom) {
+                    // Custom functions manage the queue themselves; only cap their time.
+                    await this._withAutoplayTimeout(Promise.resolve().then(() => custom(player, lastPlayedTrack)), timeout).catch((err) => {
+                        forgescript_1.Logger.error('ForgeLinked autoplay error:', err);
+                        return null;
+                    });
+                    state.cache = undefined;
+                    state.inFlight = undefined;
+                    state.generation++;
+                    if (player.queue.tracks.length > 0 || player.queue.current) {
+                        player.setData('forgelinked_autoplay_filled', true);
+                    }
                     return;
                 }
-                const run = Promise.resolve().then(() => runAutoplay(player, lastPlayedTrack));
-                void run
-                    .then(async () => {
-                    if (!this.lavalink.players.has(player.guildId))
-                        return;
-                    if (player.queue.tracks.length === 0)
-                        return;
-                    if (player.playing || player.queue.current)
-                        return;
-                    if (this.lavalink.options.autoSkip === false) {
-                        // Match lavalink-client's old behavior: autoplay fills the
-                        // queue, but autoSkip=false means it is not started.
-                        player.queue.current = player.queue.tracks.shift() ?? null;
-                        await player.queue.utils.save().catch(() => undefined);
-                        return;
-                    }
-                    await player.play({ noReplace: true, paused: false });
-                })
-                    .catch((err) => forgescript_1.Logger.error('ForgeLinked autoplay background error:', err))
-                    .finally(() => {
-                    player.deleteData(lockKey);
-                    this.pendingAutoplay.delete(player.guildId);
-                    this._finishQueueEmptyWait(player);
-                });
-            });
+                let tracks = null;
+                if (state.cache && state.cache.baseId === baseId) {
+                    tracks = state.cache.tracks;
+                    state.cache = undefined;
+                    state.inFlight = undefined;
+                    state.generation++;
+                }
+                else if (state.inFlight && state.inFlight.baseId === baseId) {
+                    // Reuse the prefetch that is still processing instead of starting a
+                    // second lookup. Timeout turns a slow lookup into a straight miss.
+                    const inflight = state.inFlight;
+                    tracks = await this._withAutoplayTimeout(inflight.promise, timeout);
+                    state.inFlight = undefined;
+                    state.generation++;
+                }
+                else {
+                    state.cache = undefined;
+                    state.inFlight = undefined;
+                    state.generation++;
+                    tracks = await this._withAutoplayTimeout(collect(player, lastPlayedTrack), timeout);
+                }
+                if (tracks?.length) {
+                    await player.queue.add(tracks);
+                    player.setData('forgelinked_autoplay_filled', true);
+                }
+            }
+            catch (err) {
+                forgescript_1.Logger.error('ForgeLinked autoplay error:', err);
+            }
+            finally {
+                this.pendingAutoplay.delete(guildId);
+            }
         };
     }
 }

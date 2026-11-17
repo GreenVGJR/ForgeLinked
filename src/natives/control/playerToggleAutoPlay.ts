@@ -21,7 +21,8 @@ export default new NativeFunction({
   output: ArgType.Boolean,
   execute(ctx, [guildId]) {
     try {
-      const linked = ctx.client.getExtension(ForgeLinked, true)?.lavalink
+      const extension = ctx.client.getExtension(ForgeLinked, true)
+      const linked = extension?.lavalink
       if (!linked) return this.customError('ForgeLinked is not initialized')
 
       if (!guildId) guildId = ctx.guild
@@ -35,6 +36,7 @@ export default new NativeFunction({
 
       const next = !(player as any).autoPlay
       ;(player as any).autoPlay = next
+      if (!next) extension?.clearAutoplayState(guildId.id)
 
       return this.success(next)
     } catch (err) {

@@ -65,58 +65,69 @@ export class PlayerRelatingManager {
     }
   }
 
-  async autoplay(player: Player, lastPlayedTrack: Track): Promise<void> {
-    if (!(player as any).autoPlay) return
-    if (player.queue.tracks.length >= this.autoplayOptions.maxFetchTracks) return
-    if (player.getData<boolean>(this.lockKey)) return
+  /**
+   * Resolve related tracks without touching the player's queue. Used by the
+   * prefetch path so the lookup can run in the background at trackStart.
+   *
+   * Returns null when the lookup must abort entirely (SoundCloud 403).
+   */
+  async collectTracks(player: Player, lastPlayedTrack: Track): Promise<Track[] | null> {
+    if (!(player as any).autoPlay) return []
+    if (!this.isEligibleAutoplayTrack(lastPlayedTrack)) return []
+    if (player.queue.tracks.length >= this.autoplayOptions.maxFetchTracks) return []
+    if (player.getData<boolean>(this.lockKey)) return []
 
     player.setData(this.lockKey, true)
 
     try {
-      const localCandidates = await this.relatedCandidates(lastPlayedTrack).catch(() => [])
+      const localCandidates = await this.relatedCandidates(lastPlayedTrack)
+      if (localCandidates === null) return null
 
-      // SoundCloud 403 returns null to abort the whole run without
-      // burning retries or Lavalink fallback searches.
-      if (localCandidates === null) return
-
-      for (let attempt = 0; attempt <= this.autoplayOptions.retryLimit; attempt++) {
-        await this.fillQueue(player, lastPlayedTrack, localCandidates)
-        if (player.queue.tracks.length > 0) return
-
-        if (attempt < this.autoplayOptions.retryLimit) {
-          await this.sleep(this.autoplayOptions.retryDuration)
-        }
-      }
-
-      if (player.queue.tracks.length === 0) {
-        Logger.warn(
-          `ForgeLinked autoplay: no usable related track found for "${lastPlayedTrack.info.title}"`,
-        )
-      }
+      const collected: Track[] = []
+      await this.fillQueue(player, lastPlayedTrack, localCandidates, collected)
+      return collected
     } catch (err) {
       Logger.error('ForgeLinked autoplay error:', err)
+      return []
     } finally {
       player.deleteData(this.lockKey)
     }
+  }
+
+  async autoplay(player: Player, lastPlayedTrack: Track): Promise<void> {
+    const tracks = await this.collectTracks(player, lastPlayedTrack)
+    if (tracks?.length) await player.queue.add(tracks)
+  }
+
+  private isEligibleAutoplayTrack(track: Track): boolean {
+    if (this.sourceName(track)) return true
+
+    // Direct links have no provider feed. Only search by metadata when there
+    // is some; otherwise "popular music" would queue unrelated tracks.
+    return !!String(track.info.title ?? '').trim() || !!String(track.info.author ?? '').trim()
   }
 
   private async fillQueue(
     player: Player,
     lastPlayedTrack: Track,
     initialCandidates: LocalRelatedCandidate[],
+    collected?: Track[],
   ): Promise<void> {
     let baseTrack = lastPlayedTrack
     let candidates = initialCandidates
     let chains = 0
 
-    while (player.queue.tracks.length < this.autoplayOptions.maxFetchTracks) {
-      const ok = await this.fetchOneTrack(player, baseTrack, candidates)
+    while (
+      (collected?.length ?? player.queue.tracks.length) < this.autoplayOptions.maxFetchTracks
+    ) {
+      const ok = await this.fetchOneTrack(player, baseTrack, candidates, collected)
       if (ok) continue
 
       // The chain depth is capped at retryLimit so it can't loop indefinitely.
       if (chains >= this.autoplayOptions.retryLimit) break
 
-      const last = player.queue.tracks[player.queue.tracks.length - 1] as Track | undefined
+      const pool = collected?.length ? collected : player.queue.tracks
+      const last = pool[pool.length - 1] as Track | undefined
       if (!last || last === baseTrack) break
 
       baseTrack = last
@@ -131,25 +142,24 @@ export class PlayerRelatingManager {
     player: Player,
     lastPlayedTrack: Track,
     localCandidates: LocalRelatedCandidate[],
+    collected?: Track[],
   ): Promise<boolean> {
-    if (await this.queueLocalRelatedCandidate(player, lastPlayedTrack, localCandidates)) return true
-    if (await this.queueLavalinkSearchCandidate(player, lastPlayedTrack)) return true
+    if (await this.queueLocalRelatedCandidate(player, lastPlayedTrack, localCandidates, collected))
+      return true
+    if (await this.queueLavalinkSearchCandidate(player, lastPlayedTrack, collected)) return true
     return false
-  }
-
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms))
   }
 
   private async queueLocalRelatedCandidate(
     player: Player,
     baseTrack: Track,
     candidates: LocalRelatedCandidate[],
+    collected?: Track[],
   ): Promise<boolean> {
     if (!candidates.length) return false
 
     const unblocked = candidates.filter(
-      (candidate) => !this.isBlockedCandidate(player, baseTrack, candidate),
+      (candidate) => !this.isBlockedCandidate(player, baseTrack, candidate, collected),
     )
     const shuffled = this.shuffleArray(unblocked)
 
@@ -164,18 +174,23 @@ export class PlayerRelatingManager {
         continue
       }
 
-      const pick = this.pickTrack(player, baseTrack, result.tracks as Track[])
+      const pick = this.pickTrack(player, baseTrack, result.tracks as Track[], collected)
       if (!pick) continue
 
       markNonPlaylistTracks([pick])
-      player.queue.add(pick)
+      if (collected) collected.push(pick)
+      else player.queue.add(pick)
       return true
     }
 
     return false
   }
 
-  private async queueLavalinkSearchCandidate(player: Player, baseTrack: Track): Promise<boolean> {
+  private async queueLavalinkSearchCandidate(
+    player: Player,
+    baseTrack: Track,
+    collected?: Track[],
+  ): Promise<boolean> {
     for (const attempt of this.buildSearchAttempts(baseTrack)) {
       const result = await player
         .search({ query: attempt.query, source: attempt.source }, baseTrack.requester)
@@ -190,11 +205,12 @@ export class PlayerRelatingManager {
         continue
       }
 
-      const pick = this.pickTrack(player, baseTrack, result.tracks as Track[])
+      const pick = this.pickTrack(player, baseTrack, result.tracks as Track[], collected)
       if (!pick) continue
 
       markNonPlaylistTracks([pick])
-      player.queue.add(pick)
+      if (collected) collected.push(pick)
+      else player.queue.add(pick)
       return true
     }
 
@@ -613,7 +629,12 @@ export class PlayerRelatingManager {
     return typeof source === 'string' && source.endsWith('search')
   }
 
-  private pickTrack(player: Player, baseTrack: Track, tracks: Track[]): Track | null {
+  private pickTrack(
+    player: Player,
+    baseTrack: Track,
+    tracks: Track[],
+    collected?: Track[],
+  ): Track | null {
     const blockedIdentifiers = new Set<string>()
     const blockedUris = new Set<string>()
 
@@ -627,6 +648,7 @@ export class PlayerRelatingManager {
     block(player.queue.current as Track | null)
     for (const track of player.queue.previous ?? []) block(track as Track)
     for (const track of player.queue.tracks ?? []) block(track as Track)
+    for (const track of collected ?? []) block(track)
 
     const pool = tracks.filter((track) => {
       if (track.info.identifier && blockedIdentifiers.has(track.info.identifier)) return false
@@ -643,6 +665,7 @@ export class PlayerRelatingManager {
     player: Player,
     baseTrack: Track,
     candidate: LocalRelatedCandidate,
+    collected?: Track[],
   ): boolean {
     if (candidate.url === baseTrack.info.uri || candidate.identifier === baseTrack.info.identifier)
       return true
@@ -652,6 +675,7 @@ export class PlayerRelatingManager {
       player.queue.current,
       ...(player.queue.previous ?? []),
       ...(player.queue.tracks ?? []),
+      ...(collected ?? []),
     ]
 
     return queuedTracks.some((track) => {
@@ -697,7 +721,7 @@ export class PlayerRelatingManager {
       .replace(/\s+/g, '')
     if (source) return source
 
-    const uri = track.info.uri.toLowerCase()
+    const uri = (track.info.uri ?? '').toLowerCase()
     if (uri.includes('music.youtube.com')) return 'youtubemusic'
     if (uri.includes('youtube.com') || uri.includes('youtu.be')) return 'youtube'
     if (uri.includes('soundcloud.com')) return 'soundcloud'
@@ -745,6 +769,11 @@ export class PlayerRelatingManager {
   }
 
   private youtubeVideoId(track: Track): string | null {
+    const source = this.sourceName(track)
+    const uri = track.info.uri ?? ''
+    if (source && source !== 'youtube' && source !== 'youtubemusic') return null
+    if (!source && !/youtube\.com|youtube\.be|youtu\.be/i.test(uri)) return null
+
     if (/^[A-Za-z0-9_-]{11}$/.test(track.info.identifier)) return track.info.identifier
 
     return (
@@ -756,6 +785,11 @@ export class PlayerRelatingManager {
   }
 
   private spotifyTrackId(track: Track): string | null {
+    const source = this.sourceName(track)
+    const uri = track.info.uri ?? ''
+    if (source && source !== 'spotify') return null
+    if (!source && !/spotify/i.test(uri)) return null
+
     if (/^[A-Za-z0-9]{22}$/.test(track.info.identifier)) return track.info.identifier
 
     return (
@@ -767,6 +801,11 @@ export class PlayerRelatingManager {
   }
 
   private appleMusicTrackId(track: Track): string | null {
+    const source = this.sourceName(track)
+    const uri = track.info.uri ?? ''
+    if (source && source !== 'applemusic') return null
+    if (!source && !/music\.apple\.com/i.test(uri)) return null
+
     if (/^\d+$/.test(track.info.identifier)) return track.info.identifier
 
     return track.info.uri.match(/[?&]i=(\d+)/)?.[1] ?? null

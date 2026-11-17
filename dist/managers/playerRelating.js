@@ -19,51 +19,63 @@ class PlayerRelatingManager {
             retryDuration: Math.max(0, Math.floor(raw.retryDuration ?? 5000)),
         };
     }
-    async autoplay(player, lastPlayedTrack) {
+    /**
+     * Resolve related tracks without touching the player's queue. Used by the
+     * prefetch path so the lookup can run in the background at trackStart.
+     *
+     * Returns null when the lookup must abort entirely (SoundCloud 403).
+     */
+    async collectTracks(player, lastPlayedTrack) {
         if (!player.autoPlay)
-            return;
+            return [];
+        if (!this.isEligibleAutoplayTrack(lastPlayedTrack))
+            return [];
         if (player.queue.tracks.length >= this.autoplayOptions.maxFetchTracks)
-            return;
+            return [];
         if (player.getData(this.lockKey))
-            return;
+            return [];
         player.setData(this.lockKey, true);
         try {
-            const localCandidates = await this.relatedCandidates(lastPlayedTrack).catch(() => []);
-            // SoundCloud 403 returns null to abort the whole run without
-            // burning retries or Lavalink fallback searches.
+            const localCandidates = await this.relatedCandidates(lastPlayedTrack);
             if (localCandidates === null)
-                return;
-            for (let attempt = 0; attempt <= this.autoplayOptions.retryLimit; attempt++) {
-                await this.fillQueue(player, lastPlayedTrack, localCandidates);
-                if (player.queue.tracks.length > 0)
-                    return;
-                if (attempt < this.autoplayOptions.retryLimit) {
-                    await this.sleep(this.autoplayOptions.retryDuration);
-                }
-            }
-            if (player.queue.tracks.length === 0) {
-                forgescript_1.Logger.warn(`ForgeLinked autoplay: no usable related track found for "${lastPlayedTrack.info.title}"`);
-            }
+                return null;
+            const collected = [];
+            await this.fillQueue(player, lastPlayedTrack, localCandidates, collected);
+            return collected;
         }
         catch (err) {
             forgescript_1.Logger.error('ForgeLinked autoplay error:', err);
+            return [];
         }
         finally {
             player.deleteData(this.lockKey);
         }
     }
-    async fillQueue(player, lastPlayedTrack, initialCandidates) {
+    async autoplay(player, lastPlayedTrack) {
+        const tracks = await this.collectTracks(player, lastPlayedTrack);
+        if (tracks?.length)
+            await player.queue.add(tracks);
+    }
+    isEligibleAutoplayTrack(track) {
+        if (this.sourceName(track))
+            return true;
+        // Direct links have no provider feed. Only search by metadata when there
+        // is some; otherwise "popular music" would queue unrelated tracks.
+        return !!String(track.info.title ?? '').trim() || !!String(track.info.author ?? '').trim();
+    }
+    async fillQueue(player, lastPlayedTrack, initialCandidates, collected) {
         let baseTrack = lastPlayedTrack;
         let candidates = initialCandidates;
         let chains = 0;
-        while (player.queue.tracks.length < this.autoplayOptions.maxFetchTracks) {
-            const ok = await this.fetchOneTrack(player, baseTrack, candidates);
+        while ((collected?.length ?? player.queue.tracks.length) < this.autoplayOptions.maxFetchTracks) {
+            const ok = await this.fetchOneTrack(player, baseTrack, candidates, collected);
             if (ok)
                 continue;
             // The chain depth is capped at retryLimit so it can't loop indefinitely.
             if (chains >= this.autoplayOptions.retryLimit)
                 break;
-            const last = player.queue.tracks[player.queue.tracks.length - 1];
+            const pool = collected?.length ? collected : player.queue.tracks;
+            const last = pool[pool.length - 1];
             if (!last || last === baseTrack)
                 break;
             baseTrack = last;
@@ -74,20 +86,17 @@ class PlayerRelatingManager {
             chains++;
         }
     }
-    async fetchOneTrack(player, lastPlayedTrack, localCandidates) {
-        if (await this.queueLocalRelatedCandidate(player, lastPlayedTrack, localCandidates))
+    async fetchOneTrack(player, lastPlayedTrack, localCandidates, collected) {
+        if (await this.queueLocalRelatedCandidate(player, lastPlayedTrack, localCandidates, collected))
             return true;
-        if (await this.queueLavalinkSearchCandidate(player, lastPlayedTrack))
+        if (await this.queueLavalinkSearchCandidate(player, lastPlayedTrack, collected))
             return true;
         return false;
     }
-    sleep(ms) {
-        return new Promise((resolve) => setTimeout(resolve, ms));
-    }
-    async queueLocalRelatedCandidate(player, baseTrack, candidates) {
+    async queueLocalRelatedCandidate(player, baseTrack, candidates, collected) {
         if (!candidates.length)
             return false;
-        const unblocked = candidates.filter((candidate) => !this.isBlockedCandidate(player, baseTrack, candidate));
+        const unblocked = candidates.filter((candidate) => !this.isBlockedCandidate(player, baseTrack, candidate, collected));
         const shuffled = this.shuffleArray(unblocked);
         for (const candidate of shuffled) {
             const result = await player.search(candidate.url, baseTrack.requester).catch(() => null);
@@ -97,16 +106,19 @@ class PlayerRelatingManager {
                 result.loadType === 'error') {
                 continue;
             }
-            const pick = this.pickTrack(player, baseTrack, result.tracks);
+            const pick = this.pickTrack(player, baseTrack, result.tracks, collected);
             if (!pick)
                 continue;
             (0, trackPlaylist_js_1.markNonPlaylistTracks)([pick]);
-            player.queue.add(pick);
+            if (collected)
+                collected.push(pick);
+            else
+                player.queue.add(pick);
             return true;
         }
         return false;
     }
-    async queueLavalinkSearchCandidate(player, baseTrack) {
+    async queueLavalinkSearchCandidate(player, baseTrack, collected) {
         for (const attempt of this.buildSearchAttempts(baseTrack)) {
             const result = await player
                 .search({ query: attempt.query, source: attempt.source }, baseTrack.requester)
@@ -117,11 +129,14 @@ class PlayerRelatingManager {
                 result.loadType === 'error') {
                 continue;
             }
-            const pick = this.pickTrack(player, baseTrack, result.tracks);
+            const pick = this.pickTrack(player, baseTrack, result.tracks, collected);
             if (!pick)
                 continue;
             (0, trackPlaylist_js_1.markNonPlaylistTracks)([pick]);
-            player.queue.add(pick);
+            if (collected)
+                collected.push(pick);
+            else
+                player.queue.add(pick);
             return true;
         }
         return false;
@@ -473,7 +488,7 @@ class PlayerRelatingManager {
     isTextSearchSource(source) {
         return typeof source === 'string' && source.endsWith('search');
     }
-    pickTrack(player, baseTrack, tracks) {
+    pickTrack(player, baseTrack, tracks, collected) {
         const blockedIdentifiers = new Set();
         const blockedUris = new Set();
         const block = (track) => {
@@ -490,6 +505,8 @@ class PlayerRelatingManager {
             block(track);
         for (const track of player.queue.tracks ?? [])
             block(track);
+        for (const track of collected ?? [])
+            block(track);
         const pool = tracks.filter((track) => {
             if (track.info.identifier && blockedIdentifiers.has(track.info.identifier))
                 return false;
@@ -501,7 +518,7 @@ class PlayerRelatingManager {
             return null;
         return this.shuffleArray(pool)[0];
     }
-    isBlockedCandidate(player, baseTrack, candidate) {
+    isBlockedCandidate(player, baseTrack, candidate, collected) {
         if (candidate.url === baseTrack.info.uri || candidate.identifier === baseTrack.info.identifier)
             return true;
         if (this.hasSimilarLocalTitle(baseTrack, candidate))
@@ -510,6 +527,7 @@ class PlayerRelatingManager {
             player.queue.current,
             ...(player.queue.previous ?? []),
             ...(player.queue.tracks ?? []),
+            ...(collected ?? []),
         ];
         return queuedTracks.some((track) => {
             if (!track)
@@ -553,7 +571,7 @@ class PlayerRelatingManager {
             .replace(/\s+/g, '');
         if (source)
             return source;
-        const uri = track.info.uri.toLowerCase();
+        const uri = (track.info.uri ?? '').toLowerCase();
         if (uri.includes('music.youtube.com'))
             return 'youtubemusic';
         if (uri.includes('youtube.com') || uri.includes('youtu.be'))
@@ -604,6 +622,12 @@ class PlayerRelatingManager {
         return [`${author} mix`, `${author} songs`];
     }
     youtubeVideoId(track) {
+        const source = this.sourceName(track);
+        const uri = track.info.uri ?? '';
+        if (source && source !== 'youtube' && source !== 'youtubemusic')
+            return null;
+        if (!source && !/youtube\.com|youtube\.be|youtu\.be/i.test(uri))
+            return null;
         if (/^[A-Za-z0-9_-]{11}$/.test(track.info.identifier))
             return track.info.identifier;
         return (track.info.uri.match(/[?&]v=([A-Za-z0-9_-]{11})/)?.[1] ??
@@ -612,6 +636,12 @@ class PlayerRelatingManager {
             null);
     }
     spotifyTrackId(track) {
+        const source = this.sourceName(track);
+        const uri = track.info.uri ?? '';
+        if (source && source !== 'spotify')
+            return null;
+        if (!source && !/spotify/i.test(uri))
+            return null;
         if (/^[A-Za-z0-9]{22}$/.test(track.info.identifier))
             return track.info.identifier;
         return (track.info.identifier.match(/spotify:track:([A-Za-z0-9]+)/)?.[1] ??
@@ -620,6 +650,12 @@ class PlayerRelatingManager {
             null);
     }
     appleMusicTrackId(track) {
+        const source = this.sourceName(track);
+        const uri = track.info.uri ?? '';
+        if (source && source !== 'applemusic')
+            return null;
+        if (!source && !/music\.apple\.com/i.test(uri))
+            return null;
         if (/^\d+$/.test(track.info.identifier))
             return track.info.identifier;
         return track.info.uri.match(/[?&]i=(\d+)/)?.[1] ?? null;

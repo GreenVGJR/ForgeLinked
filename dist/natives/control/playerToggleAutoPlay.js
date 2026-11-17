@@ -20,7 +20,8 @@ exports.default = new forgescript_1.NativeFunction({
     output: forgescript_1.ArgType.Boolean,
     execute(ctx, [guildId]) {
         try {
-            const linked = ctx.client.getExtension(index_js_1.ForgeLinked, true)?.lavalink;
+            const extension = ctx.client.getExtension(index_js_1.ForgeLinked, true);
+            const linked = extension?.lavalink;
             if (!linked)
                 return this.customError('ForgeLinked is not initialized');
             if (!guildId)
@@ -32,6 +33,8 @@ exports.default = new forgescript_1.NativeFunction({
                 return this.customError('Player not found');
             const next = !player.autoPlay;
             player.autoPlay = next;
+            if (!next)
+                extension?.clearAutoplayState(guildId.id);
             return this.success(next);
         }
         catch (err) {

@@ -17,10 +17,17 @@ export declare class PlayerRelatingManager {
     private readonly lockKey;
     private readonly autoplayOptions;
     constructor(options?: PlayerRelatingOptions);
+    /**
+     * Resolve related tracks without touching the player's queue. Used by the
+     * prefetch path so the lookup can run in the background at trackStart.
+     *
+     * Returns null when the lookup must abort entirely (SoundCloud 403).
+     */
+    collectTracks(player: Player, lastPlayedTrack: Track): Promise<Track[] | null>;
     autoplay(player: Player, lastPlayedTrack: Track): Promise<void>;
+    private isEligibleAutoplayTrack;
     private fillQueue;
     private fetchOneTrack;
-    private sleep;
     private queueLocalRelatedCandidate;
     private queueLavalinkSearchCandidate;
     private relatedCandidates;

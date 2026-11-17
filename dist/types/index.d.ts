@@ -24,10 +24,9 @@ export interface ForgeLinkSetupOptions {
      */
     enableDebugEvents?: boolean;
     /**
-     * Run autoplay outside lavalink-client's queueEnd await cycle so
-     * linkedTrackEnd / linkedQueueEnd fire immediately, then start the autoplay
-     * track when it arrives. Set to false to restore the old blocking behavior.
-     * Defaults to true.
+     * Prefetch autoplay tracks in the background at trackStart when at most one
+     * track remains, then consume the result at queueEnd. With false, the lookup
+     * only starts at queueEnd. Defaults to true.
      */
     decoupleAutoplay?: boolean;
     requesterTransformer?: (requester: unknown) => unknown;
@@ -84,14 +83,25 @@ export declare class ForgeLinked extends ForgeExtension {
     private emitter;
     private lastEndedTrack;
     private pendingAutoplay;
+    private relating?;
+    private autoplayState;
     constructor(options: ForgeLinkSetupOptions);
     init(client: ForgeClient): Promise<void>;
     private _emitError;
+    /** Drop all cached/in-flight autoplay work for a guild. */
+    clearAutoplayState(guildId: string): void;
+    private _getAutoplayState;
+    private _autoplayTrackKey;
+    /**
+     * Race a lookup against the configured timeout. A timeout (or retryDuration
+     * of 0, meaning no cap) is reported as a miss so callers fail straight away.
+     */
+    private _withAutoplayTimeout;
+    /** Start the background lookup at trackStart without touching the queue. */
+    private _prefetchAutoplay;
     private _handleTrackEnd;
     private _handleQueueEmptyStart;
     private _deferQueueEmptyTimer;
-    private _finishQueueEmptyWait;
-    private _armQueueEmptyTimer;
     private _handleQueueEnd;
     private _nodeSnapshot;
     private _errorInfo;
